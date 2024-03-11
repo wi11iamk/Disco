@@ -1,4 +1,4 @@
-# Disco
+# disco
 Dimensionality reduction of human pose data for synergy discovery
 
 Use of disco.py requires full installations of [miniconda3](https://docs.anaconda.com/free/miniconda/miniconda-install/), [DeepLabCut](https://deeplabcut.github.io/DeepLabCut/docs/installation.html), and [HUB-DT](https://github.com/Loken85/HUB_DT).
