@@ -5,71 +5,115 @@ Created on Wed Feb 28 19:55:56 2024
 
 @author: wi11iamk
 """
-#%%
+# Import necessary libraries
 
-import h5py
+import h5py, numpy as np, pandas as pd, umap, matplotlib.pyplot as plt, seaborn as sns
 
-import numpy as np
-
-import pandas as pd
-
-from hubdt import data_loading
-
-from hubdt import behav_session_params
-
-from hubdt import wavelets
-
-import umap
-
-from hubdt import hub_utils, hub_analysis
-
-from hubdt import t_sne
-
-import matplotlib.pyplot as plt
-
-import seaborn as sns
-
-from hubdt import hdb_clustering
-
-from hubdt import b_utils
+from hubdt import data_loading, behav_session_params, wavelets, hub_utils, hub_analysis, t_sne, hdb_clustering, b_utils
 
 from scipy.signal import find_peaks, peak_prominences
 
+from scipy.stats import gaussian_kde
+
+from scipy.spatial.distance import jensenshannon
+
 #%%
+
+# Initialise the HUB-DT session and import the DLC features and tracking data
 
 mysesh = behav_session_params.load_session_params ('Mine')
 
 features = data_loading.dlc_get_feats (mysesh)
 
-del features[4:7]
+del features[4:7] # Delete features, should you want to
 
 tracking = data_loading.load_tracking (mysesh, dlc=True, feats=features)
 
 #%%
 
-scales, frequencies = wavelets.calculate_scales (0.75, 1.5, 120, 4)
+scales, frequencies = wavelets.calculate_scales (0.75, 2, 120, 4)
 
 proj = wavelets.wavelet_transform_np (tracking, scales, frequencies, 120)
 
 #%%
 
+# Transpose the projections array such that the new dimensions match Tracking array
+
 proj = np.transpose(proj)
 
 #%%
 
-mapper = umap.UMAP (n_neighbors=35, n_components=2, min_dist=0.0).fit(proj)
+# Fit projection array as a UMAP object and store the embeddings into a variable with only 2(D) columns
+
+mapper = umap.UMAP (n_neighbors=30, n_components=2, min_dist=0.1).fit(proj)
 
 embed = mapper.embedding_
 
 #%%
 
-density, xgrid, ygrid = t_sne.calc_density(embed)
-
+plt.scatter(embed[:, 0], embed[:, 1], s=0.5, c='blue', alpha=0.5)
+            
 #%%
 
-fig, ax = plt.subplots()
+# Calculate a density grid of the data set using KDE on the whole embedding and then iterate the calculation 
+# for any number of slices of the embedding, i.e. trials, and then overlay the densities of the slices atop the whole density grid.
+# Plot the density of the whole embedding and then each overlay, per trial, as a subplot
 
-plt.pcolormesh(xgrid, ygrid, density)
+# Define the fixed grid based on the entire dataset
+x_min, x_max = embed[:, 0].min(), embed[:, 0].max()
+y_min, y_max = embed[:, 1].min(), embed[:, 1].max()
+x_grid, y_grid = np.mgrid[x_min:x_max:292j, y_min:y_max:292j]  # 292j for a 292x292 grid
+grid_coords = np.vstack([x_grid.ravel(), y_grid.ravel()])
+
+# Function to calculate density on the fixed grid
+def calc_density_on_fixed_grid(data, grid_coords):
+    kde = gaussian_kde(data.T)
+    density = kde(grid_coords).reshape(x_grid.shape)
+    return density
+
+# Function to normalize and flatten a grid to form a probability vector
+def normalize_grid(grid):
+    flattened = grid.flatten()
+    normalized = flattened / np.sum(flattened)
+    return normalized
+
+# Calculate the density for the entire dataset
+entire_data_density = calc_density_on_fixed_grid(embed, grid_coords)
+
+# Define slices (including an empty tuple for the entire dataset)
+slices = [(), (0, 1200), (14400, 15600), (84508, 85828)]
+
+# Initialize container to store the normalized probability vectors
+probability_vectors = []
+
+# Plotting
+fig, axes = plt.subplots(1, len(slices), figsize=(20, 4))
+
+for i, sl in enumerate(slices):
+    ax = axes[i]
+    # Plot the entire dataset's density map as background
+    pcm = ax.pcolormesh(x_grid, y_grid, entire_data_density, shading='auto', cmap='viridis')
+    fig.colorbar(pcm, ax=ax, label='Density')
+    
+    # Calculate and overlay the slice if specified
+    if sl:  # For slices, overlay the slice data and include in legend
+        slice_data = embed[sl[0]:sl[1], :]
+        slice_density = calc_density_on_fixed_grid(slice_data, grid_coords)
+        slice_vector = normalize_grid(slice_density)
+        probability_vectors.append(slice_vector)  # Store the probability vector
+        
+        # Scatter plot for slice data with a label for legend
+        ax.scatter(slice_data[:, 0], slice_data[:, 1], color='red', s=1, label=f'Slice {i} Data Points')
+        ax.set_title(f'Slice {i}: {sl[0]}-{sl[1]}')
+        ax.legend()  # Only call legend when there are labeled artists
+    else:
+        entire_vector = normalize_grid(entire_data_density)
+        probability_vectors.insert(0, entire_vector)  # Ensure the entire dataset vector is first
+        ax.set_title('Entire Dataset')
+        # No call to ax.legend() here since there's no labeled artist for the entire dataset plot
+
+plt.tight_layout()
+plt.show()
 
 #%%
 
@@ -87,20 +131,32 @@ fig2 = hdb_clustering.plot_condensed_tree(clusterobj, select_clusts=True, label_
 
 arraylabels = np.reshape(labels, (-1,1))
 
-fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 19, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+#%%
+
+# At this point, determine the synergy of interest and first frame of the synergy using the arraylabels variable
+# Enter the Frame value into the variable below
+
+syn_frame_start = 450
+
+fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 13, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+
+#%%
 
 #fig4 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, compare_to=True, comp_label=20)
 
-fig5 = b_utils.plot_curr_cluster(embed, density, 400, xgrid, ygrid)
+fig5 = b_utils.plot_curr_cluster(embed, density, syn_frame_start, xgrid, ygrid)
 
 #book = b_utils.frame_curr_cluster(embed, density, frames, xi, yi, save_folder, dpi=100, width=800, height=600)(embed, density, xgrid, ygrid, 120, start_f = 740, end_f = 860)
 
 #%%
 
+# Sanity checks: With DLC .h5 file, detect frame-moment of each keypress, calculate onset and offset of each keypress, 
+# print keypress counts per channel, and plot time series of pose with keypress onset, offset, and frame-moment markers.
+
 # Path to the .h5 file
 h5_path = '/Users/wi11iamk/Documents/GitHub/HUB_DT/sample_data/027_D1DLC_resnet50_keyTest027Jan12shuffle1_400000.h5'
 
-# Assuming an order for the y-values of each channel within the 'values_block_0' array
+# Assuming an order for the y-values of each channel within the DLC .h5 'values_block_0' array
 little_y_idx = 1   
 ring_y_idx = 4      
 middle_y_idx = 7    
@@ -108,13 +164,10 @@ index_y_idx = 10
 
 with h5py.File(h5_path, 'r') as file:
     # Accessing the structured array from the table
-    data = file['df_with_missing/table']['values_block_0'][400:520, :]  # Extracting data for a range of frames
+    data = file['df_with_missing/table']['values_block_0'][syn_frame_start:(syn_frame_start+120), :]  # Extracting data for a range of frames
     
     # An array to include only the y-values for the specified channels
     y_values_combined = np.vstack((data[:, little_y_idx], data[:, ring_y_idx], data[:, middle_y_idx], data[:, index_y_idx])).T
-
-# Sanity checks: Detect keypresses, calculate average range of motion, standard deviations, 
-# print keypress counts, and plot time series with keypress markers.
 
 keypress_counts = []  # To store the count of keypresses for each channel
 fig, ax = plt.subplots(figsize=(14, 6))
@@ -132,12 +185,12 @@ for i, channel_name in enumerate(channel_names):
     keypress_counts.append(len(peaks))
     
     # Plotting the time series for each channel
-    ax.plot(np.arange(400, 400 + y_values_combined.shape[0]), y_values_combined[:, i], label=channel_name, color=colors[i])
+    ax.plot(np.arange(syn_frame_start, syn_frame_start + y_values_combined.shape[0]), y_values_combined[:, i], label=channel_name, color=colors[i])
     
     # Adding red markers for the detected keypresses
-    ax.plot(peaks + 400, y_values_combined[peaks, i], 'r*', markersize=8)
+    ax.plot(peaks + syn_frame_start, y_values_combined[peaks, i], 'r*', markersize=8)
 
-# Enhancing the plot
+# Properties of the plot
 ax.set_title('Time Series of Channels with Detected Keypresses')
 ax.set_xlabel('Frame Index')
 ax.set_ylabel('Y Position')
@@ -150,8 +203,8 @@ for i, channel_name in enumerate(channel_names):
     print(f"{channel_name} channel detected keypresses: {keypress_counts[i]}")
 
 
-# Check the first y-value for each channel at frame index __ for comparison
-print("Y-values at frame index 400 (in the order of little, ring, middle, index):")
+# Check the first y-value for each channel at 'syn_frame_start' for manual comparison, if desired
+print("Y-values (in the order of little, ring, middle, index):")
 print(f"Little: {y_values_combined[0, 0]}")  # First column in the combined array
 print(f"Ring: {y_values_combined[0, 1]}")   # Second column in the combined array
 print(f"Middle: {y_values_combined[0, 2]}") # Third column in the combined array
@@ -221,6 +274,13 @@ plt.title('Average Velocities for Each Channel')
 plt.ylabel('Average Velocity')
 plt.xlabel('Channel')
 plt.show()
+
+#%%
+
+# Flatten KDE grids to vectors and normalise such that the vector values sum to 1, 
+# then measure distance between vectors using Jensen-Shannon Divergence. 
+
+
 
 
 
