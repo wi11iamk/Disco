@@ -33,7 +33,7 @@ tracking = data_loading.load_tracking (mysesh, dlc=True, feats=features)
 
 #%%
 
-scales, frequencies = wavelets.calculate_scales (0.75, 2, 120, 4)
+scales, frequencies = wavelets.calculate_scales (0.75, 2.25, 120, 4)
 
 proj = wavelets.wavelet_transform_np (tracking, scales, frequencies, 120)
 
@@ -121,21 +121,20 @@ for i, vector in enumerate(probability_vectors):
     else:
         print(f"Vector {i} does not sum to 1.0; sum is {vector_sum}.")
 
-
 plt.tight_layout()
 plt.show()
 
 #%%
 
-clusterobj = hdb_clustering.hdb_scan (embed, 600, 50, selection='leaf', cluster_selection_epsilon=0.18)
+clusterobj = hdb_clustering.hdb_scan (embed, 500, 50, selection='leaf', cluster_selection_epsilon=0.15)
 
 labels = clusterobj.labels_
 
 probabilities = clusterobj.probabilities_
 
-fig = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, noise=False)
+fig1 = hdb_clustering.plot_condensed_tree(clusterobj, select_clusts=True, label_clusts=True)
 
-fig2 = hdb_clustering.plot_condensed_tree(clusterobj, select_clusts=True, label_clusts=True)
+fig2 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, noise=False)
 
 #%%
 
@@ -146,10 +145,10 @@ arraylabels = np.reshape(labels, (-1,1))
 # At this point, determine the synergy of interest and first frame of the synergy using the arraylabels variable
 # Enter the Frame value into the variable below as well as the number of frames you would like to search beyond the syn_frame_start
 
-fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 18, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 3, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
 
-syn_frame_start = 536
-syn_window = (syn_frame_start + 140)
+syn_frame_start = 74865
+syn_window = (syn_frame_start + 130)
 
 #%%
 
@@ -163,7 +162,7 @@ fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_
 # print keypress counts per channel, and plot time series of pose with keypress onset, offset, and frame markers.
 
 # Define a function to find the onset and offset based on the derivative
-def find_onset_offset(derivative, peak_index, window=10):
+def find_onset_offset(derivative, peak_index, window=12):
     onset_index = peak_index - window
     offset_index = peak_index + window
     return max(0, onset_index), min(len(derivative) - 1, offset_index)
@@ -187,11 +186,11 @@ onset_offset_data = {channel: [] for channel in ['Little', 'Ring', 'Middle', 'In
 
 fig, ax = plt.subplots(figsize=(14, 6))
 colors = ['blue', 'green', 'red', 'cyan']  # Colors for each channel
-channel_names = ['Little', 'Ring', 'Middle', 'Index']
+channels = ['Little', 'Ring', 'Middle', 'Index']
 
-for i, channel_name in enumerate(channel_names):
+for i, channel_name in enumerate(channels):
     derivative = np.diff(y_values_combined[:, i], prepend=y_values_combined[0, i])
-    peaks, _ = find_peaks(y_values_combined[:, i], prominence=28)
+    peaks, _ = find_peaks(y_values_combined[:, i], prominence=25)
 
     keypress_counts.append(len(peaks))
     ax.plot(np.arange(syn_frame_start, syn_frame_start + y_values_combined.shape[0]), y_values_combined[:, i], label=channel_name, color=colors[i])
@@ -209,7 +208,7 @@ ax.set_ylabel('Y Position')
 ax.legend()
 plt.show()
 
-for i, channel_name in enumerate(channel_names):
+for i, channel_name in enumerate(channels):
     print(f"{channel_name} channel detected keypresses: {keypress_counts[i]}")
 
 # Optional: Check the first y-value for each channel at 'syn_frame_start'
@@ -221,15 +220,31 @@ print(f"Index: {y_values_combined[0, 3]}")
 
 #%%
 
-# Calculate average range of movement, average frame to frame velocity, for each channel, and plot
-# Calculate number of frames and plot percent of total frames in which movements overlapped
+# Calculate and plot average range of movements, average frame to frame velocity, and overlap of movements
 
 average_ranges_of_motion = []
 average_velocities = []
 std_devs_amplitude = []
 std_devs_velocity = []
 
-# Calculate Average Range of Motion for each channel and its standard deviation
+# Initialize an empty list to store all keypress events
+all_keypress_events = []
+
+# Collect keypress events for each channel, associating onsets and offsets with their peak
+for i, channel in enumerate(channels):
+    peaks, _ = find_peaks(y_values_combined[:, i], prominence=25)
+    for peak in peaks:
+        onset, offset = find_onset_offset(derivative, peak)  # Assume this function is defined
+        # Append each event with a tuple: (frame, type, channel, peak_frame)
+        # The peak_frame is used to associate onsets/offsets with their peak for sorting
+        all_keypress_events.append((onset, 'onset', channel, peak))
+        all_keypress_events.append((peak, 'peak', channel, peak))
+        all_keypress_events.append((offset, 'offset', channel, peak))
+
+# Sort the events list by peak_frame primarily, and then by frame to maintain the sequence
+all_keypress_events_sorted = sorted(all_keypress_events, key=lambda x: (x[3], x[0]))
+
+# Calculate average range of motion for each channel and its standard deviation
 for i in range(y_values_combined.shape[1]):
     peaks, _ = find_peaks(y_values_combined[:, i], prominence=25)
     if len(peaks) > 0:
@@ -242,7 +257,7 @@ for i in range(y_values_combined.shape[1]):
     average_ranges_of_motion.append(average_range)
     std_devs_amplitude.append(std_dev_amplitude)
 
-# Calculate Average Frame-to-Frame Velocity for each channel and its standard deviation
+# Calculate average frame-to-frame velocity for each channel and its standard deviation
 for i in range(y_values_combined.shape[1]):
     velocities = np.diff(y_values_combined[:, i])
     average_velocity = np.mean(np.abs(velocities))
@@ -250,50 +265,36 @@ for i in range(y_values_combined.shape[1]):
     average_velocities.append(average_velocity)
     std_devs_velocity.append(std_dev_velocity)
     
-# Overlap calculation, step 1: Collect all onsets and offsets across channels into one list
-all_events = []
-for channel in channel_names:
-    for onset_offset in onset_offset_data[channel]:
-        onset, offset = onset_offset
-        all_events.append((onset, 'onset', channel))
-        all_events.append((offset, 'offset', channel))
-
-# Sort all events by frame number
-all_events_sorted = sorted(all_events, key=lambda x: x[0])
-
-# Overlap calculation, step 2: Calculate overlaps by sequentially comparing offset to the next onset across channels
+# Overlap calculation: Sequentially compare offset to the next onset within the combined and sequential list
+# Initialize variable to count total frames involved in overlaps
 total_overlap_frames = 0
-for i in range(len(all_events_sorted) - 1):
-    current_event = all_events_sorted[i]
-    next_event = all_events_sorted[i + 1]
-    
-    # Ensure we are comparing an offset to an onset and that they are from different channels
-    if current_event[1] == 'offset' and next_event[1] == 'onset' and current_event[2] != next_event[2]:
-        overlap = next_event[0] - current_event[0]
+for i in range(len(all_keypress_events_sorted) - 1):
+    current_event = all_keypress_events_sorted[i]
+    next_event = all_keypress_events_sorted[i + 1]
+
+    if current_event[1] == 'offset' and next_event[1] == 'onset':
+        overlap = current_event[0] - next_event[0]
         if overlap > 0:
             total_overlap_frames += overlap
 
-# Calculate percent overlap for the entire dataset
+# Calculate percent overlap
 percent_overlap = total_overlap_frames / len(y_values_combined) * 100
 
-# Create dataframes for plotting
-channels = ['Little', 'Ring', 'Middle', 'Index']
-
-# Amplitude Plot Data
+# Amplitude plot data
 df_amplitude = pd.DataFrame({
     'Channel': channels,
     'Average Amplitude': average_ranges_of_motion,
     'STD': std_devs_amplitude
 })
 
-# Velocity Plot Data
+# Velocity plot data
 df_velocity = pd.DataFrame({
     'Channel': channels,
     'Average Velocity': average_velocities,
     'STD': std_devs_velocity
 })
 
-# Plotting average amplitude for each channel
+# Plot average amplitude for each channel
 plt.figure(figsize=(10, 6))
 sns.barplot(x='Channel', y='Average Amplitude', data=df_amplitude, capsize=.1, palette='viridis')
 plt.errorbar(x=range(len(channels)), y=df_amplitude['Average Amplitude'], yerr=df_amplitude['STD'], fmt='none', c='black', capsize=5)
@@ -302,7 +303,7 @@ plt.ylabel('Average Amplitude')
 plt.xlabel('Channel')
 plt.show()
 
-# Plotting average velocity for each channel
+# Plot average velocity for each channel
 plt.figure(figsize=(10, 6))
 sns.barplot(x='Channel', y='Average Velocity', data=df_velocity, capsize=.1, palette='viridis')
 plt.errorbar(x=range(len(channels)), y=df_velocity['Average Velocity'], yerr=df_velocity['STD'], fmt='none', c='black', capsize=5)
@@ -311,7 +312,7 @@ plt.ylabel('Average Velocity')
 plt.xlabel('Channel')
 plt.show()
 
-# Plotting overlap percent as a bar chart
+# Plot percent of frames detected as overlap
 plt.figure(figsize=(6, 4))
 sns.barplot(x=['Total Overlap'], y=[percent_overlap], palette='viridis')
 plt.title('Total Percent Overlap Among Channels')
@@ -326,4 +327,3 @@ print(f"Total percent overlap among channels: {percent_overlap:.2f}%")
 # TODO Calculate distance between vectors using Jensen-Shannon Divergence. 
 # TODO     Calculate sub-slices of trial embeddings to then calculate divergence within and between trials
 # TODO Calculate statistical differences between vectors using Kolomgorov-Smirnov Test
-# TODO Overlap subtraction is backwards, counting distance between overlap as overlap. Need to correct.
