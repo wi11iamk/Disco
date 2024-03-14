@@ -39,7 +39,7 @@ proj = wavelets.wavelet_transform_np (tracking, scales, frequencies, 120)
 
 #%%
 
-# Transpose the projections array such that the new dimensions match Tracking array
+# Transpose projection array to match dimensions of tracking array
 
 proj = np.transpose(proj)
 
@@ -121,6 +121,7 @@ for i, vector in enumerate(probability_vectors):
     else:
         print(f"Vector {i} does not sum to 1.0; sum is {vector_sum}.")
 
+
 plt.tight_layout()
 plt.show()
 
@@ -138,34 +139,92 @@ fig2 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, noise=Fal
 
 #%%
 
+# Calcuate the average synergy length, min, max, number of uses, total time in use, and percent of time used
+
 arraylabels = np.reshape(labels, (-1,1))
 
+def calculate_label_data(arr):
+    continuous_counts = {}
+    current_val = None
+    count = 0
+    start_frame = 0  # To track the starting frame of the current sequence
+    
+    for idx, val in enumerate(arr.flatten()):  # Iterate with index to track frame numbers
+        if val != -1:
+            if val == current_val:
+                count += 1
+            else:
+                if current_val is not None:
+                    if current_val in continuous_counts:
+                        continuous_counts[current_val]['counts'].append((count, start_frame))
+                    else:
+                        continuous_counts[current_val] = {'counts': [(count, start_frame)], 'total_frames': 0}
+                current_val = val
+                count = 1
+                start_frame = idx  # Update start frame for the new sequence
+        else:
+            if current_val is not None:
+                if current_val in continuous_counts:
+                    continuous_counts[current_val]['counts'].append((count, start_frame))
+                else:
+                    continuous_counts[current_val] = {'counts': [(count, start_frame)], 'total_frames': 0}
+            current_val = None
+            count = 0
+
+    if current_val is not None and count > 0:
+        if current_val in continuous_counts:
+            continuous_counts[current_val]['counts'].append((count, start_frame))
+        else:
+            continuous_counts[current_val] = {'counts': [(count, start_frame)], 'total_frames': 0}
+
+    total_all_frames = 0
+    for val, data in continuous_counts.items():
+        counts = [c[0] for c in data['counts']]
+        start_frames = [c[1] for c in data['counts']]
+        total_frames = sum(counts)
+        max_count = max(counts)
+        max_count_index = counts.index(max_count)
+        max_count_start_frame = start_frames[max_count_index]
+        continuous_counts[val]['avg'] = np.mean(counts)
+        continuous_counts[val]['min'] = min(counts)
+        continuous_counts[val]['max'] = max_count
+        continuous_counts[val]['max_frame'] = max_count_start_frame  # The frame where the max count starts
+        continuous_counts[val]['length'] = len(counts)
+        continuous_counts[val]['total_frames'] = total_frames
+        total_all_frames += total_frames
+    
+    # Calculate the percentage of total frames for each int
+    for val in continuous_counts:
+        continuous_counts[val]['percent'] = (continuous_counts[val]['total_frames'] / total_all_frames) * 100
+    
+    # Sort the results by int value and prepare the final list of tuples
+    sorted_results = sorted([(k, v['avg'], v['min'], v['max'], v['max_frame'], v['length'], v['total_frames'], v['percent']) 
+                             for k, v in continuous_counts.items()])
+    
+    return sorted_results
+
+# Example usage with the 'arraylabels' variable
+arraylabels_data = calculate_label_data(arraylabels)
+
 #%%
 
-# At this point, determine the synergy of interest and first frame of the synergy using the arraylabels variable
-# Enter the Frame value into the variable below as well as the number of frames you would like to search beyond the syn_frame_start
+# At this point, determine your synergy of interest, including the start and end frames
+# Consult the arraylabels_data list for information about each synergy
 
-fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 3, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 18, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
 
-syn_frame_start = 74865
-syn_window = (syn_frame_start + 130)
+syn_frame_start = 70030
+syn_frame_end = 70167
 
 #%%
 
-#fig4 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, compare_to=True, comp_label=20)
+#fig4 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, compare_to=True, comp_label=8)
 
 fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_grid, y_grid)
 
 #%%
 
-# Sanity checks: With DLC .h5 file, detect each keypress, calculate onset and offset of each keypress, 
-# print keypress counts per channel, and plot time series of pose with keypress onset, offset, and frame markers.
-
-# Define a function to find the onset and offset based on the derivative
-def find_onset_offset(derivative, peak_index, window=12):
-    onset_index = peak_index - window
-    offset_index = peak_index + window
-    return max(0, onset_index), min(len(derivative) - 1, offset_index)
+# Calculate and plot the frame of each keypress; calculate onset and offset of each keypress
 
 # Path to the .h5 file
 h5_path = '/Users/wi11iamk/Documents/GitHub/HUB_DT/sample_data/027_D1DLC_resnet50_keyTest027Jan12shuffle1_400000.h5'
@@ -175,11 +234,18 @@ ring_y_idx = 4
 middle_y_idx = 7
 index_y_idx = 10
 
+y_threshold = 460  # A keypress cannot be detected beneath this value
+
 with h5py.File(h5_path, 'r') as file:
-    # Accessing the structured array from the table for a specified frame range
-    data = file['df_with_missing/table']['values_block_0'][syn_frame_start:syn_window, :]
+    # Accessing the structured array from the table for the specified frame range
+    data = file['df_with_missing/table']['values_block_0'][syn_frame_start:syn_frame_end, :]
     # An array to include only the y-values for the specified channels
     y_values_combined = np.vstack((data[:, little_y_idx], data[:, ring_y_idx], data[:, middle_y_idx], data[:, index_y_idx])).T
+
+def find_onset_offset(derivative, peak_index, window=15):
+    onset_index = peak_index - window
+    offset_index = peak_index + window
+    return max(0, onset_index), min(len(derivative) - 1, offset_index)
 
 keypress_counts = []  # To store the count of keypresses for each channel
 onset_offset_data = {channel: [] for channel in ['Little', 'Ring', 'Middle', 'Index']}  # To store onset and offset frames
@@ -190,13 +256,14 @@ channels = ['Little', 'Ring', 'Middle', 'Index']
 
 for i, channel_name in enumerate(channels):
     derivative = np.diff(y_values_combined[:, i], prepend=y_values_combined[0, i])
-    peaks, _ = find_peaks(y_values_combined[:, i], prominence=25)
+    peaks, _ = find_peaks(y_values_combined[:, i], prominence=26)
+    valid_peaks = [peak for peak in peaks if y_values_combined[peak, i] > y_threshold]  # Filter peaks based on threshold
 
-    keypress_counts.append(len(peaks))
-    ax.plot(np.arange(syn_frame_start, syn_frame_start + y_values_combined.shape[0]), y_values_combined[:, i], label=channel_name, color=colors[i])
-    ax.plot(peaks + syn_frame_start, y_values_combined[peaks, i], 'r*', markersize=8)
-
-    for peak in peaks:
+    keypress_counts.append(len(valid_peaks))
+    ax.plot(np.arange(syn_frame_start, syn_frame_start + len(y_values_combined[:, i])), y_values_combined[:, i], label=channel_name, color=colors[i])
+    for peak in valid_peaks:
+        adjusted_peak = peak + syn_frame_start  # Correctly adjust peak index for plotting
+        ax.plot(adjusted_peak, y_values_combined[peak, i], 'r*', markersize=8)
         onset, offset = find_onset_offset(derivative, peak)
         ax.plot(onset + syn_frame_start, y_values_combined[onset, i], 'go')  # Green for onset
         ax.plot(offset + syn_frame_start, y_values_combined[offset, i], 'mo')  # Magenta for offset
@@ -211,18 +278,14 @@ plt.show()
 for i, channel_name in enumerate(channels):
     print(f"{channel_name} channel detected keypresses: {keypress_counts[i]}")
 
-# Optional: Check the first y-value for each channel at 'syn_frame_start'
-print(f"Y-values at {syn_frame_start}:")
-print(f"Little: {y_values_combined[0, 0]}")
-print(f"Ring: {y_values_combined[0, 1]}")
-print(f"Middle: {y_values_combined[0, 2]}")
-print(f"Index: {y_values_combined[0, 3]}")
+print("Y-values at frame {}:".format(syn_frame_start))
+for i, channel_name in enumerate(channels):
+    print(f"{channel_name}: {y_values_combined[0, i]}")
 
 #%%
 
-# Calculate and plot average range of movements, average frame to frame velocity, and overlap of movements
+# Calculate and plot range of movement, average frame to frame velocity, and overlap of movements for each channel
 
-average_ranges_of_motion = []
 average_velocities = []
 std_devs_amplitude = []
 std_devs_velocity = []
@@ -230,32 +293,27 @@ std_devs_velocity = []
 # Initialize an empty list to store all keypress events
 all_keypress_events = []
 
-# Collect keypress events for each channel, associating onsets and offsets with their peak
+# Collect keypress events for each channel, applying the threshold
 for i, channel in enumerate(channels):
-    peaks, _ = find_peaks(y_values_combined[:, i], prominence=25)
-    for peak in peaks:
-        onset, offset = find_onset_offset(derivative, peak)  # Assume this function is defined
-        # Append each event with a tuple: (frame, type, channel, peak_frame)
-        # The peak_frame is used to associate onsets/offsets with their peak for sorting
-        all_keypress_events.append((onset, 'onset', channel, peak))
-        all_keypress_events.append((peak, 'peak', channel, peak))
-        all_keypress_events.append((offset, 'offset', channel, peak))
+    peaks, _ = find_peaks(y_values_combined[:, i], prominence=26)
+    # Filter peaks based on the y-value threshold
+    valid_peaks = [peak for peak in peaks if y_values_combined[peak, i] > y_threshold]
+    for peak in valid_peaks:
+        onset, offset = find_onset_offset(np.diff(y_values_combined[:, i], prepend=y_values_combined[0, i]), peak)
+        # Store events with their adjusted frame number
+        all_keypress_events.append((onset + syn_frame_start, 'onset', channel, peak))
+        all_keypress_events.append((peak + syn_frame_start, 'peak', channel, peak))
+        all_keypress_events.append((offset + syn_frame_start, 'offset', channel, peak))
 
 # Sort the events list by peak_frame primarily, and then by frame to maintain the sequence
 all_keypress_events_sorted = sorted(all_keypress_events, key=lambda x: (x[3], x[0]))
 
-# Calculate average range of motion for each channel and its standard deviation
-for i in range(y_values_combined.shape[1]):
-    peaks, _ = find_peaks(y_values_combined[:, i], prominence=25)
-    if len(peaks) > 0:
-        prominences = peak_prominences(y_values_combined[:, i], peaks)[0]
-        average_range = np.mean(prominences)
-        std_dev_amplitude = np.std(prominences)
-    else:
-        average_range = 0
-        std_dev_amplitude = 0
-    average_ranges_of_motion.append(average_range)
-    std_devs_amplitude.append(std_dev_amplitude)
+# Calculate the range of motion for each channel
+ranges_of_motion = []
+for i, channel in enumerate(channels):
+    channel_data = y_values_combined[:, i]
+    range_of_motion = np.max(channel_data) - np.min(channel_data)
+    ranges_of_motion.append(range_of_motion)
 
 # Calculate average frame-to-frame velocity for each channel and its standard deviation
 for i in range(y_values_combined.shape[1]):
@@ -281,10 +339,9 @@ for i in range(len(all_keypress_events_sorted) - 1):
 percent_overlap = total_overlap_frames / len(y_values_combined) * 100
 
 # Amplitude plot data
-df_amplitude = pd.DataFrame({
+df_range_of_motion = pd.DataFrame({
     'Channel': channels,
-    'Average Amplitude': average_ranges_of_motion,
-    'STD': std_devs_amplitude
+    'Range of Motion': ranges_of_motion
 })
 
 # Velocity plot data
@@ -294,12 +351,11 @@ df_velocity = pd.DataFrame({
     'STD': std_devs_velocity
 })
 
-# Plot average amplitude for each channel
+# Plotting the range of motion for each channel
 plt.figure(figsize=(10, 6))
-sns.barplot(x='Channel', y='Average Amplitude', data=df_amplitude, capsize=.1, palette='viridis')
-plt.errorbar(x=range(len(channels)), y=df_amplitude['Average Amplitude'], yerr=df_amplitude['STD'], fmt='none', c='black', capsize=5)
-plt.title('Average Keypress Amplitudes for Each Channel')
-plt.ylabel('Average Amplitude')
+sns.barplot(x='Channel', y='Range of Motion', data=df_range_of_motion, palette='viridis')
+plt.title('Range of Motion for Each Channel')
+plt.ylabel('Range of Motion')
 plt.xlabel('Channel')
 plt.show()
 
