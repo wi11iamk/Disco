@@ -39,21 +39,15 @@ scales, frequencies = wavelets.calculate_scales (0.75, 2.25, 120, 4)
 
 proj = wavelets.wavelet_transform_np (tracking, scales, frequencies, 120)
 
-#%%
-
-# Transpose projection array to match dimensions of tracking array
-
 proj = np.transpose(proj)
 
 #%%
 
-# Fit projection array as a UMAP object and store the embeddings into a variable with only 2(D) columns
+# Fit wavelet projection into a UMAP object and embed the data in two dimensions (columns)
 
 mapper = umap.UMAP (n_neighbors=30, n_components=2, min_dist=0.1).fit(proj)
 
 embed = mapper.embedding_
-
-#%%
 
 plt.scatter(embed[:, 0], embed[:, 1], s=0.25, c='blue', alpha=0.25)
             
