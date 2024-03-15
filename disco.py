@@ -140,84 +140,86 @@ fig2 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, noise=Fal
 
 #%%
 
-# Calcuate the average synergy length, min, max, number of uses, total time in use, and percent of time used
+# Calcuate the average, min, and max synergy length, number of uses, total time in use, and percent of time used
 
 a_labels = np.reshape(labels, (-1,1))
 
-def calculate_label_data(arr):
+import numpy as np
+
+def calculate_label_data(arr, threshold=0):
     continuous_counts = {}
     current_val = None
     count = 0
-    start_frame = 0  # To track the starting frame of the current sequence
+    start_frame = 0
+    minus_one_counter = 0  # Counter for -1 values
     
-    for idx, val in enumerate(arr.flatten()):  # Iterate with index to track frame numbers
+    arr = arr.flatten()  # Ensure the array is flattened for iteration
+    
+    for idx, val in enumerate(arr):
         if val != -1:
-            if val == current_val:
+            if val == current_val or minus_one_counter <= threshold and current_val is not None:
+                if minus_one_counter <= threshold and current_val is not None:
+                    count += minus_one_counter  # Include -1s within threshold in the count
                 count += 1
+                minus_one_counter = 0  # Reset the -1 counter
             else:
                 if current_val is not None:
-                    if current_val in continuous_counts:
-                        continuous_counts[current_val]['counts'].append((count, start_frame))
-                    else:
-                        continuous_counts[current_val] = {'counts': [(count, start_frame)], 'total_frames': 0}
+                    finalize_count(continuous_counts, current_val, count, start_frame)
                 current_val = val
                 count = 1
-                start_frame = idx  # Update start frame for the new sequence
+                start_frame = idx
         else:
-            if current_val is not None:
-                if current_val in continuous_counts:
-                    continuous_counts[current_val]['counts'].append((count, start_frame))
-                else:
-                    continuous_counts[current_val] = {'counts': [(count, start_frame)], 'total_frames': 0}
-            current_val = None
-            count = 0
-
+            if minus_one_counter < threshold:
+                minus_one_counter += 1  # Tolerate -1 within the threshold
+            else:
+                if current_val is not None:
+                    finalize_count(continuous_counts, current_val, count, start_frame)
+                    current_val = None
+                    count = 0
+                minus_one_counter = 0  # Reset -1 counter
+    
+    # Finalize the last sequence
     if current_val is not None and count > 0:
-        if current_val in continuous_counts:
-            continuous_counts[current_val]['counts'].append((count, start_frame))
-        else:
-            continuous_counts[current_val] = {'counts': [(count, start_frame)], 'total_frames': 0}
+        finalize_count(continuous_counts, current_val, count, start_frame)
+    
+    process_counts(continuous_counts)
+    
+    # Prepare sorted results
+    sorted_results = sorted([(k,) + v['stats'] for k, v in continuous_counts.items()], key=lambda x: x[0])
+    
+    return sorted_results
 
-    total_all_frames = 0
+def finalize_count(continuous_counts, val, count, start_frame):
+    if val in continuous_counts:
+        continuous_counts[val].setdefault('counts', []).append(count)
+        continuous_counts[val].setdefault('start_frames', []).append(start_frame)
+    else:
+        continuous_counts[val] = {'counts': [count], 'start_frames': [start_frame]}
+
+def process_counts(continuous_counts):
+    total_all_frames = sum(sum(v['counts']) for v in continuous_counts.values())
     for val, data in continuous_counts.items():
-        counts = [c[0] for c in data['counts']]
-        start_frames = [c[1] for c in data['counts']]
+        counts, start_frames = data['counts'], data['start_frames']
         total_frames = sum(counts)
         max_count = max(counts)
         max_count_index = counts.index(max_count)
         max_count_start_frame = start_frames[max_count_index]
-        continuous_counts[val]['avg'] = np.mean(counts)
-        continuous_counts[val]['min'] = min(counts)
-        continuous_counts[val]['max'] = max_count
-        continuous_counts[val]['max_frame'] = max_count_start_frame  # The frame where the max count starts
-        continuous_counts[val]['length'] = len(counts)
-        continuous_counts[val]['total_frames'] = total_frames
-        total_all_frames += total_frames
-    
-    # Calculate the percentage of total frames for each int
-    for val in continuous_counts:
-        continuous_counts[val]['percent'] = (continuous_counts[val]['total_frames'] / total_all_frames) * 100
-    
-    # Sort the results by int value and prepare the final list of tuples
-    sorted_results = sorted([(k, v['avg'], v['min'], v['max'], v['max_frame'], v['length'], v['total_frames'], v['percent']) 
-                             for k, v in continuous_counts.items()])
-    
-    return sorted_results
+        data['stats'] = (
+            np.mean(counts), min(counts), max_count, max_count_start_frame,
+            len(counts), total_frames, (total_frames / total_all_frames) * 100
+        )
 
-# Example usage with the 'arraylabels' variable
-a_labels_data = calculate_label_data(a_labels)
+a_labels_data = calculate_label_data(a_labels, threshold=10)
 
 #%%
 
-# At this point, determine your synergy of interest, including the start and end frames
-# Consult the arraylabels_data list for information about each synergy
-
-fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 8, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+# Consult the a_labels_data list for information about each synergy; determine your synergy of interest;
+# enter start and end frames of the synergy; timeseries calculations are based on this range
 
 syn_frame_start = 57955
 syn_frame_end = (57955+130)
 
-#%%
+fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 8, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
 
 #fig4 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, compare_to=True, comp_label=8)
 
@@ -226,14 +228,16 @@ fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_
 #%%
 
 # Calculate and plot the frame of each keypress; calculate onset and offset of each keypress;
-# calculate and plot the integrals of the normalised channels and sum the integrals
+# calculate and plot normalised channels and sum the integrals of each channel
 
 # Path to the .h5 file
 h5_path = '/Users/wi11iamk/Documents/GitHub/HUB_DT/sample_data/027_D1DLC_resnet50_keyTest027Jan12shuffle1_400000.h5'
 y_threshold = 460  # A keypress cannot be detected beneath this value
 
 with h5py.File(h5_path, 'r') as file:
+    # Accessing the structured array from the table for the specified frame range
     data = file['df_with_missing/table']['values_block_0'][syn_frame_start:syn_frame_end, :]
+    # An array to include only the y-values for the specified channels
     y_values_combined = np.vstack((data[:, 1], data[:, 4], data[:, 7], data[:, 10])).T
 
 def find_onset_offset(derivative, peak_index, window=15):
@@ -245,8 +249,13 @@ def find_onset_offset(derivative, peak_index, window=15):
 normalized_y_values = y_values_combined - y_values_combined[0, :]
 positive_y_values = np.abs(normalized_y_values)
 
-# Calculate the area under each curve
-total_activity = np.sum([simps(positive_y_values[:, i]) for i in range(4)])
+# Calculate the area under each curve separately
+area_under_curve = [simps(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
+
+# Normalize areas to sum up to 100%
+total_area = sum(area_under_curve)
+normalized_areas_percent = [(area / total_area) * 100 for area in area_under_curve]
+channels = ['Little', 'Ring', 'Middle', 'Index']
 
 keypress_counts = [0] * 4  # Preallocate list for efficiency
 onset_offset_data = {channel: [] for channel in ['Little', 'Ring', 'Middle', 'Index']}  # To store onset and offset frames
@@ -291,7 +300,21 @@ ax2.set_ylabel('Adjusted Y Position')
 ax2.legend()
 plt.show()
 
-print(f"Total Activity: {total_activity}")
+# Create a DataFrame for plotting normalized areas
+df_normalized_areas = pd.DataFrame({
+    'Channel': channels,
+    'Normalized Area (%)': normalized_areas_percent
+})
+
+# Plot the normalized areas as a percentage for each channel
+plt.figure(figsize=(10, 6))
+sns.barplot(x='Channel', y='Normalized Area (%)', data=df_normalized_areas, palette='viridis')
+plt.title('Normalized Area Contribution of Each Channel')
+plt.xlabel('Channel')
+plt.ylabel('Normalized Area (%)')
+plt.show()
+
+print(f"Total Activity: {total_area}")
 
 #%%
 
