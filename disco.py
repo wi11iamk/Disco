@@ -19,6 +19,8 @@ from scipy.stats import gaussian_kde
 
 from scipy.spatial.distance import jensenshannon
 
+from scipy.integrate import simps
+
 #%%
 
 # Initialise the HUB-DT session; import all DLC features and tracking data
@@ -57,9 +59,8 @@ plt.scatter(embed[:, 0], embed[:, 1], s=0.25, c='blue', alpha=0.25)
             
 #%%
 
-# Calculate a density grid of the data set using KDE on the whole embedding and then iterate the calculation 
-# for any number of slices of the embedding, i.e. trials, and then overlay the densities of the slices atop the whole density grid.
-# Plot the density of the whole embedding and then each overlay, per trial, as a subplot
+# Calculate and plot a gaussian KDE over the embedded data; calculate slices of any size of the UMAP
+# embedding, e.g. trials; plot each slice as an overlay atop the gaussian KDE
 
 # Define the fixed grid based on the entire dataset
 x_min, x_max = embed[:, 0].min(), embed[:, 0].max()
@@ -141,7 +142,7 @@ fig2 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, noise=Fal
 
 # Calcuate the average synergy length, min, max, number of uses, total time in use, and percent of time used
 
-arraylabels = np.reshape(labels, (-1,1))
+a_labels = np.reshape(labels, (-1,1))
 
 def calculate_label_data(arr):
     continuous_counts = {}
@@ -204,17 +205,17 @@ def calculate_label_data(arr):
     return sorted_results
 
 # Example usage with the 'arraylabels' variable
-arraylabels_data = calculate_label_data(arraylabels)
+a_labels_data = calculate_label_data(a_labels)
 
 #%%
 
 # At this point, determine your synergy of interest, including the start and end frames
 # Consult the arraylabels_data list for information about each synergy
 
-fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 18, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 8, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
 
-syn_frame_start = 70030
-syn_frame_end = 70167
+syn_frame_start = 57955
+syn_frame_end = (57955+130)
 
 #%%
 
@@ -224,43 +225,44 @@ fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_
 
 #%%
 
-# Calculate and plot the frame of each keypress; calculate onset and offset of each keypress
+# Calculate and plot the frame of each keypress; calculate onset and offset of each keypress;
+# calculate and plot the integrals of the normalised channels and sum the integrals
 
 # Path to the .h5 file
 h5_path = '/Users/wi11iamk/Documents/GitHub/HUB_DT/sample_data/027_D1DLC_resnet50_keyTest027Jan12shuffle1_400000.h5'
-# Write in the index location of each feature y-value within the 'values_block_0' .h5 table
-little_y_idx = 1
-ring_y_idx = 4
-middle_y_idx = 7
-index_y_idx = 10
-
 y_threshold = 460  # A keypress cannot be detected beneath this value
 
 with h5py.File(h5_path, 'r') as file:
-    # Accessing the structured array from the table for the specified frame range
     data = file['df_with_missing/table']['values_block_0'][syn_frame_start:syn_frame_end, :]
-    # An array to include only the y-values for the specified channels
-    y_values_combined = np.vstack((data[:, little_y_idx], data[:, ring_y_idx], data[:, middle_y_idx], data[:, index_y_idx])).T
+    y_values_combined = np.vstack((data[:, 1], data[:, 4], data[:, 7], data[:, 10])).T
 
 def find_onset_offset(derivative, peak_index, window=15):
     onset_index = peak_index - window
     offset_index = peak_index + window
     return max(0, onset_index), min(len(derivative) - 1, offset_index)
 
-keypress_counts = []  # To store the count of keypresses for each channel
+# Normalize starting points to 0 and make all values positive
+normalized_y_values = y_values_combined - y_values_combined[0, :]
+positive_y_values = np.abs(normalized_y_values)
+
+# Calculate the area under each curve
+total_activity = np.sum([simps(positive_y_values[:, i]) for i in range(4)])
+
+keypress_counts = [0] * 4  # Preallocate list for efficiency
 onset_offset_data = {channel: [] for channel in ['Little', 'Ring', 'Middle', 'Index']}  # To store onset and offset frames
 
 fig, ax = plt.subplots(figsize=(14, 6))
 colors = ['blue', 'green', 'red', 'cyan']  # Colors for each channel
 channels = ['Little', 'Ring', 'Middle', 'Index']
+x_range = np.arange(syn_frame_start, syn_frame_start + len(y_values_combined))
 
 for i, channel_name in enumerate(channels):
     derivative = np.diff(y_values_combined[:, i], prepend=y_values_combined[0, i])
     peaks, _ = find_peaks(y_values_combined[:, i], prominence=26)
     valid_peaks = [peak for peak in peaks if y_values_combined[peak, i] > y_threshold]  # Filter peaks based on threshold
 
-    keypress_counts.append(len(valid_peaks))
-    ax.plot(np.arange(syn_frame_start, syn_frame_start + len(y_values_combined[:, i])), y_values_combined[:, i], label=channel_name, color=colors[i])
+    keypress_counts[i] = len(valid_peaks)
+    ax.plot(x_range, y_values_combined[:, i], label=channel_name, color=colors[i])
     for peak in valid_peaks:
         adjusted_peak = peak + syn_frame_start  # Correctly adjust peak index for plotting
         ax.plot(adjusted_peak, y_values_combined[peak, i], 'r*', markersize=8)
@@ -275,12 +277,21 @@ ax.set_ylabel('Y Position')
 ax.legend()
 plt.show()
 
+# Print the count of detected keypresses for each channel
 for i, channel_name in enumerate(channels):
     print(f"{channel_name} channel detected keypresses: {keypress_counts[i]}")
 
-print("Y-values at frame {}:".format(syn_frame_start))
+# Plot normalized and non-negative curves
+fig2, ax2 = plt.subplots(figsize=(14, 6))
 for i, channel_name in enumerate(channels):
-    print(f"{channel_name}: {y_values_combined[0, i]}")
+    ax2.plot(x_range, positive_y_values[:, i], label=channel_name, color=colors[i])
+ax2.set_title('Normalized and Non-negative Curves')
+ax2.set_xlabel('Frame Index')
+ax2.set_ylabel('Adjusted Y Position')
+ax2.legend()
+plt.show()
+
+print(f"Total Activity: {total_activity}")
 
 #%%
 
