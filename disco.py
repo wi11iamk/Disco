@@ -7,7 +7,9 @@ Created on Wed Feb 28 19:55:56 2024
 """
 #%%
 
+###
 # Import necessary libraries
+###
 
 import h5py, numpy as np, pandas as pd, umap, matplotlib.pyplot as plt, seaborn as sns
 
@@ -23,7 +25,9 @@ from scipy.integrate import simps
 
 #%%
 
+###
 # Initialise the HUB-DT session; import all DLC features and tracking data
+###
 
 mysesh = behav_session_params.load_session_params ('Mine')
 
@@ -35,6 +39,11 @@ tracking = data_loading.load_tracking (mysesh, dlc=True, feats=features)
 
 #%%
 
+###
+# Generate scales and frequencies for wavelet transform of the tracking data;
+# store the wavelet projection into a variable and then transpose the output
+###
+
 scales, frequencies = wavelets.calculate_scales (0.75, 2.25, 120, 4)
 
 proj = wavelets.wavelet_transform_np (tracking, scales, frequencies, 120)
@@ -43,7 +52,9 @@ proj = np.transpose(proj)
 
 #%%
 
+###
 # Fit wavelet projection into a UMAP object and embed the data in two dimensions (columns)
+###
 
 mapper = umap.UMAP (n_neighbors=30, n_components=2, min_dist=0.1).fit(proj)
 
@@ -53,8 +64,10 @@ plt.scatter(embed[:, 0], embed[:, 1], s=0.25, c='blue', alpha=0.25)
             
 #%%
 
+###
 # Calculate and plot a gaussian KDE over the embedded data; calculate slices of any size of the UMAP
 # embedding, e.g. trials; plot each slice as an overlay atop the gaussian KDE
+###
 
 # Define the fixed grid based on the entire dataset
 x_min, x_max = embed[:, 0].min(), embed[:, 0].max()
@@ -116,15 +129,14 @@ for i, vector in enumerate(probability_vectors):
     else:
         print(f"Vector {i} does not sum to 1.0; sum is {vector_sum}.")
 
-
 plt.tight_layout()
 plt.show()
 
 #%%
 
-### 
-# Generate HDBSCAN cluster object, cluster labels # and probabilities for all clustered data; plot # cluster tree; plot cluster labels over UMAP 
-# embedding
+###
+# Generate HDBSCAN cluster object, labels and probabilities for all clustered data; 
+# plot cluster distance tree; plot cluster labels atop UMAP embedding
 ###
 
 clusterobj = hdb_clustering.hdb_scan (embed, 500, 50, selection='leaf', cluster_selection_epsilon=0.15)
@@ -139,7 +151,9 @@ fig2 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, noise=Fal
 
 #%%
 
-# Calcuate the average, min, and max length, number of uses, total time in use, and percent of time used for each synergy 
+### 
+# Calcuate the average, min, and max lengths, number of uses, total time and percent of time in use for each synergy
+###
 
 a_labels = np.reshape(labels, (-1,1))
 
@@ -210,8 +224,10 @@ a_labels_data = calculate_label_data(a_labels, threshold=10)
 
 #%%
 
+###
 # Consult the a_labels_data list for information about each synergy; determine your synergy of interest;
 # enter start and end frames of the synergy; timeseries calculations are based on this range
+###
 
 syn_frame_start = 57955
 syn_frame_end = (57955+130)
@@ -224,8 +240,10 @@ fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_
 
 #%%
 
-# Calculate and plot the frame of each keypress; calculate onset and offset of each keypress;
-# calculate and plot normalised channels and sum the integrals of each channel
+###
+# Calculate and plot the time series of each channel, the frame of each keypress, the onset and offset 
+# of each keypress; calculate and plot normalised channels and the normalised integrals of each channel
+###
 
 # Path to the .h5 file
 h5_path = '/Users/wi11iamk/Documents/GitHub/HUB_DT/sample_data/027_D1DLC_resnet50_keyTest027Jan12shuffle1_400000.h5'
@@ -283,10 +301,6 @@ ax.set_ylabel('Y Position')
 ax.legend()
 plt.show()
 
-# Print the count of detected keypresses for each channel
-for i, channel_name in enumerate(channels):
-    print(f"{channel_name} channel detected keypresses: {keypress_counts[i]}")
-
 # Plot normalized and non-negative curves
 fig2, ax2 = plt.subplots(figsize=(14, 6))
 for i, channel_name in enumerate(channels):
@@ -297,7 +311,7 @@ ax2.set_ylabel('Adjusted Y Position')
 ax2.legend()
 plt.show()
 
-# Create a DataFrame for plotting normalized areas
+# Normalized area plot data
 df_normalized_areas = pd.DataFrame({
     'Channel': channels,
     'Normalized Area (%)': normalized_areas_percent
@@ -311,14 +325,13 @@ plt.xlabel('Channel')
 plt.ylabel('Normalized Area (%)')
 plt.show()
 
-print(f"Total Activity: {total_area}")
-
 #%%
 
+###
 # Calculate and plot range of movement, average frame to frame velocity, and overlap of movements for each channel
+###
 
 average_velocities = []
-std_devs_amplitude = []
 std_devs_velocity = []
 
 # Initialize an empty list to store all keypress events
