@@ -15,7 +15,7 @@ import h5py, numpy as np, pandas as pd, umap, matplotlib.pyplot as plt, seaborn 
 
 from hubdt import data_loading, behav_session_params, wavelets, hub_utils, hub_analysis, t_sne, hdb_clustering, b_utils
 
-from scipy.signal import find_peaks, peak_prominences
+from scipy.signal import find_peaks
 
 from scipy.stats import gaussian_kde
 
@@ -249,39 +249,42 @@ fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_
 # channels and integrals of each channel
 ###
 
-# Path to the .h5 file
+frame_rate = 120  # fps of DLC tracking data
+y_threshold = 460 # keypresses cannot be detected beneath this value
 h5_path = '/Users/wi11iamk/Documents/GitHub/HUB_DT/sample_data/027_D1DLC_resnet50_keyTest027Jan12shuffle1_400000.h5'
-y_threshold = 460  # A keypress cannot be detected beneath this value
 
+# Define channels and colors for each channel
+channels = ['Little', 'Ring', 'Middle', 'Index']
+colors = ['blue', 'green', 'red', 'cyan']
+
+# Function to find the onset and offset given a peak
+def find_onset_offset(derivative, peak_index, window=15):
+    onset_index = max(0, peak_index - window)
+    offset_index = min(len(derivative) - 1, peak_index + window)
+    return onset_index, offset_index
+
+# Function to normalize peak frequency to Hz for the given window
+def normalize_peaks_to_hz(total_peaks, frames_in_window, frame_rate=frame_rate):
+    duration_seconds = frames_in_window / frame_rate
+    frequency_hz = total_peaks / duration_seconds
+    return frequency_hz
+
+# Access and process the .h5 data
 with h5py.File(h5_path, 'r') as file:
-    # Accessing the structured array from the table for the specified frame range
     data = file['df_with_missing/table']['values_block_0'][syn_frame_start:syn_frame_end, :]
-    # An array to include only the y-values for the specified channels
     y_values_combined = np.vstack((data[:, 1], data[:, 4], data[:, 7], data[:, 10])).T
 
-def find_onset_offset(derivative, peak_index, window=15):
-    onset_index = peak_index - window
-    offset_index = peak_index + window
-    return max(0, onset_index), min(len(derivative) - 1, offset_index)
-
-# Normalize starting points to 0 and make all values positive
 normalized_y_values = y_values_combined - y_values_combined[0, :]
 positive_y_values = np.abs(normalized_y_values)
 
-# Calculate the area under each curve separately
 area_under_curve = [simps(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
-
-# Normalize areas to sum up to 100%
 total_area = sum(area_under_curve)
 normalized_areas_percent = [(area / total_area) * 100 for area in area_under_curve]
-channels = ['Little', 'Ring', 'Middle', 'Index']
 
-keypress_counts = [0] * 4  # Preallocate list for efficiency
-onset_offset_data = {channel: [] for channel in ['Little', 'Ring', 'Middle', 'Index']}  # To store onset and offset frames
-
+total_peaks_across_channels = 0
+keypress_counts = [0] * 4
+onset_offset_data = {channel: [] for channel in channels}
 fig, ax = plt.subplots(figsize=(14, 6))
-colors = ['blue', 'green', 'red', 'cyan']  # Colors for each channel
-channels = ['Little', 'Ring', 'Middle', 'Index']
 x_range = np.arange(syn_frame_start, syn_frame_start + len(y_values_combined))
 
 for i, channel_name in enumerate(channels):
@@ -290,13 +293,14 @@ for i, channel_name in enumerate(channels):
     valid_peaks = [peak for peak in peaks if y_values_combined[peak, i] > y_threshold]  # Filter peaks based on threshold
 
     keypress_counts[i] = len(valid_peaks)
+    total_peaks_across_channels += len(valid_peaks)
     ax.plot(x_range, y_values_combined[:, i], label=channel_name, color=colors[i])
     for peak in valid_peaks:
-        adjusted_peak = peak + syn_frame_start  # Correctly adjust peak index for plotting
+        adjusted_peak = peak + syn_frame_start
         ax.plot(adjusted_peak, y_values_combined[peak, i], 'r*', markersize=8)
         onset, offset = find_onset_offset(derivative, peak)
-        ax.plot(onset + syn_frame_start, y_values_combined[onset, i], 'go')  # Green for onset
-        ax.plot(offset + syn_frame_start, y_values_combined[offset, i], 'mo')  # Magenta for offset
+        ax.plot(onset + syn_frame_start, y_values_combined[onset, i], 'go')
+        ax.plot(offset + syn_frame_start, y_values_combined[offset, i], 'mo')
         onset_offset_data[channel_name].append((onset + syn_frame_start, offset + syn_frame_start))
 
 ax.set_title('Time Series of Channels with Detected Keypresses')
@@ -304,6 +308,10 @@ ax.set_xlabel('Frame Index')
 ax.set_ylabel('Y Position')
 ax.legend()
 plt.show()
+
+# Calculate and display normalized frequency in Hz
+normalized_frequency_hz = normalize_peaks_to_hz(total_peaks_across_channels, syn_frame_end - syn_frame_start + 1, frame_rate)
+print(f"Normalized Frequency: {normalized_frequency_hz} Hz")
 
 # Plot normalized and non-negative curves
 fig2, ax2 = plt.subplots(figsize=(14, 6))
@@ -315,13 +323,11 @@ ax2.set_ylabel('Adjusted Y Position')
 ax2.legend()
 plt.show()
 
-# Normalized area plot data
+# Plot the normalized areas as a percentage for each channel
 df_normalized_areas = pd.DataFrame({
     'Channel': channels,
     'Normalized Area (%)': normalized_areas_percent
 })
-
-# Plot the normalized areas as a percentage for each channel
 plt.figure(figsize=(10, 6))
 sns.barplot(x='Channel', y='Normalized Area (%)', data=df_normalized_areas, palette='viridis')
 plt.title('Normalized Area Contribution of Each Channel')
