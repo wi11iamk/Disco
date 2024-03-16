@@ -53,7 +53,7 @@ proj = np.transpose(proj)
 #%%
 
 ###
-# Fit wavelet projection into a UMAP object and embed the data in two dimensions (columns)
+# Fit wavelet projection into a UMAP object and embed the data in two dims
 ###
 
 mapper = umap.UMAP (n_neighbors=30, n_components=2, min_dist=0.1).fit(proj)
@@ -65,8 +65,9 @@ plt.scatter(embed[:, 0], embed[:, 1], s=0.25, c='blue', alpha=0.25)
 #%%
 
 ###
-# Calculate and plot a gaussian KDE over the embedded data; calculate slices of any size of the UMAP
-# embedding, e.g. trials; plot each slice as an overlay atop the gaussian KDE
+# Calculate and plot a gaussian KDE over the embedded data; calculate slices of 
+# any size of the UMAP embedding, e.g. trials; plot each slice as an overlay 
+# atop the gaussian KDE
 ###
 
 # Define the fixed grid based on the entire dataset
@@ -135,11 +136,11 @@ plt.show()
 #%%
 
 ###
-# Generate HDBSCAN cluster object, labels and probabilities for all clustered data; 
-# plot cluster distance tree; plot cluster labels atop UMAP embedding
+# Generate HDBSCAN cluster object, labels and probabilities for all clustered 
+# data; plot cluster distance tree; plot cluster labels atop UMAP embedding
 ###
 
-clusterobj = hdb_clustering.hdb_scan (embed, 500, 50, selection='leaf', cluster_selection_epsilon=0.15)
+clusterobj = hdb_clustering.hdb_scan(embed, 500, 50, selection='leaf', cluster_selection_epsilon=0.15)
 
 labels = clusterobj.labels_
 
@@ -152,10 +153,11 @@ fig2 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, noise=Fal
 #%%
 
 ### 
-# Calcuate the average, min, and max lengths, number of uses, total time and percent of time in use for each synergy
+# Calcuate the average, min, and max lengths, number of uses, total time and 
+# percent of time in use for each synergy
 ###
 
-a_labels = np.reshape(labels, (-1,1))
+a_labels = np.reshape(labels, (-1, 1))
 
 def calculate_label_data(arr, threshold=0):
     continuous_counts = {}
@@ -225,8 +227,9 @@ a_labels_data = calculate_label_data(a_labels, threshold=10)
 #%%
 
 ###
-# Consult the a_labels_data list for information about each synergy; determine your synergy of interest;
-# enter start and end frames of the synergy; timeseries calculations are based on this range
+# Consult the a_labels_data list for information about each synergy; determine
+# your synergy of interest; enter start and end frames of the synergy; 
+# timeseries calculations are based on this range
 ###
 
 syn_frame_start = 57955
@@ -241,8 +244,9 @@ fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_
 #%%
 
 ###
-# Calculate and plot the time series of each channel, the frame of each keypress, the onset and offset 
-# of each keypress; calculate and plot normalised channels and the normalised integrals of each channel
+# Calculate and plot the time series of each channel, the frame of each 
+# keypress, the onset and offset of each keypress; calculate and plot normal
+# channels and integrals of each channel
 ###
 
 # Path to the .h5 file
@@ -328,7 +332,8 @@ plt.show()
 #%%
 
 ###
-# Calculate and plot range of movement, average frame to frame velocity, and overlap of movements for each channel
+# Calculate and plot range of movement, average frame to frame velocity, and
+# overlap of movements for each channel
 ###
 
 average_velocities = []
@@ -367,8 +372,7 @@ for i in range(y_values_combined.shape[1]):
     average_velocities.append(average_velocity)
     std_devs_velocity.append(std_dev_velocity)
     
-# Overlap calculation: Sequentially compare offset to the next onset within the combined and sequential list
-# Initialize variable to count total frames involved in overlaps
+# Calculate overlap sequentially for each offset and subsequent onset pair
 total_overlap_frames = 0
 for i in range(len(all_keypress_events_sorted) - 1):
     current_event = all_keypress_events_sorted[i]
