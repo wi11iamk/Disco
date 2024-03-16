@@ -138,8 +138,6 @@ fig2 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, noise=Fal
 
 a_labels = np.reshape(labels, (-1,1))
 
-import numpy as np
-
 def calculate_label_data(arr, threshold=0):
     continuous_counts = {}
     current_val = None
