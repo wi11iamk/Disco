@@ -122,6 +122,11 @@ plt.show()
 
 #%%
 
+### 
+# Generate HDBSCAN cluster object, cluster labels # and probabilities for all clustered data; plot # cluster tree; plot cluster labels over UMAP 
+# embedding
+###
+
 clusterobj = hdb_clustering.hdb_scan (embed, 500, 50, selection='leaf', cluster_selection_epsilon=0.15)
 
 labels = clusterobj.labels_
@@ -134,7 +139,7 @@ fig2 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, noise=Fal
 
 #%%
 
-# Calcuate the average, min, and max synergy length, number of uses, total time in use, and percent of time used
+# Calcuate the average, min, and max length, number of uses, total time in use, and percent of time used for each synergy 
 
 a_labels = np.reshape(labels, (-1,1))
 
