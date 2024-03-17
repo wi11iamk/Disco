@@ -13,7 +13,7 @@ Created on Wed Feb 28 19:55:56 2024
 
 import h5py, numpy as np, pandas as pd, umap, matplotlib.pyplot as plt, seaborn as sns
 
-from hubdt import data_loading, behav_session_params, wavelets, hub_utils, hub_analysis, t_sne, hdb_clustering, b_utils
+from hubdt import data_loading, behav_session_params, wavelets, hdb_clustering, b_utils
 
 from scipy.signal import find_peaks
 
@@ -22,6 +22,8 @@ from scipy.stats import gaussian_kde
 from scipy.spatial.distance import jensenshannon
 
 from scipy.integrate import simps
+
+from scipy.stats import ks_2samp
 
 #%%
 
@@ -53,10 +55,10 @@ proj = np.transpose(proj)
 #%%
 
 ###
-# Fit wavelet projection into a UMAP object and embed the data in two dims
+# Fit wavelet projection into two dimensional embedded space (UMAP); plot
 ###
 
-mapper = umap.UMAP (n_neighbors=30, n_components=2, min_dist=0.1).fit(proj)
+mapper = umap.UMAP(n_neighbors=30, n_components=2, min_dist=0.1).fit(proj)
 
 embed = mapper.embedding_
 
@@ -65,9 +67,8 @@ plt.scatter(embed[:, 0], embed[:, 1], s=0.25, c='blue', alpha=0.25)
 #%%
 
 ###
-# Calculate and plot a gaussian KDE over the embedded data; calculate slices of 
-# any size of the UMAP embedding, e.g. trials; plot each slice as an overlay 
-# atop the gaussian KDE
+# Calculate and plot a gaussian KDE over embedded data; calculate a list of
+# slices from the embedding and plot each as an overlay atop the gaussian KDE
 ###
 
 # Define the fixed grid based on the entire dataset
@@ -94,8 +95,10 @@ entire_data_density = calc_density_on_fixed_grid(embed, grid_coords)
 # Define slices (including an empty tuple for the entire dataset)
 slices = [(), (0, 1200), (14400, 15600), (84508, 85828)]
 
-# Initialize container to store the normalized probability vectors
+# Initialize container to store normalized probability vectors
 probability_vectors = []
+# Initialize a list to store slice_data segments for KS test
+slice_data_segments = []
 
 # Plotting
 fig, axes = plt.subplots(1, len(slices), figsize=(24, 4))
@@ -109,6 +112,7 @@ for i, sl in enumerate(slices):
     # Calculate and overlay the slice if specified
     if sl:  # For slices, overlay the slice data and include in legend
         slice_data = embed[sl[0]:sl[1], :]
+        slice_data_segments.append(slice_data)
         slice_density = calc_density_on_fixed_grid(slice_data, grid_coords)
         slice_vector = normalize_grid(slice_density)
         probability_vectors.append(slice_vector)  # Store the probability vector
@@ -121,6 +125,9 @@ for i, sl in enumerate(slices):
         entire_vector = normalize_grid(entire_data_density)
         probability_vectors.insert(0, entire_vector)  # Ensure the entire dataset vector is first
         ax.set_title('Entire Dataset')
+        
+plt.tight_layout()
+plt.show()
 
 # Ensure that each probability vector stored in the list sums to 1 within a specified tolerance
 for i, vector in enumerate(probability_vectors):
@@ -129,15 +136,31 @@ for i, vector in enumerate(probability_vectors):
         print(f"Vector {i} sums to 1.0 within tolerance.")
     else:
         print(f"Vector {i} does not sum to 1.0; sum is {vector_sum}.")
+        
+# Calculate pairwise JS divergence test between listed probability vectors
+for i in range(1, len(probability_vectors) - 1):  # Start from 1 to skip the first vector and go to len-1 for pairwise
+    js_divergence = jensenshannon(probability_vectors[i], probability_vectors[i + 1])
+    print(f"Jansen-Shannon Divergence between Vector {i} and Vector {i + 1}: {js_divergence}")
 
-plt.tight_layout()
-plt.show()
+# Calculate pairwise KS tests between listed slice_data_segments
+for i in range(len(slice_data_segments) - 1):
+    # Perform KS test between consecutive slice_data segments
+    ks_stat, p_value = ks_2samp(slice_data_segments[i].ravel(), slice_data_segments[i + 1].ravel())
+    
+    # Determine whether to reject the null hypothesis
+    if p_value <= 0.05:
+        decision = "reject the null hypothesis (the distributions are different)"
+    else:
+        decision = "fail to reject the null hypothesis (no significant difference between the distributions)"
+    
+    # Print the results, including the decision
+    print(f"KS Statistic between Slice {i+1} and Slice {i+2}: {ks_stat}, P-value: {p_value}. We {decision}.")
 
 #%%
 
 ###
-# Generate HDBSCAN cluster object, labels and probabilities for all clustered 
-# data; plot cluster distance tree; plot cluster labels atop UMAP embedding
+# Generate HDBSCAN cluster object, labels, and probabilities for embedded data; 
+# plot cluster distance tree; plot cluster labels atop embedded data
 ###
 
 clusterobj = hdb_clustering.hdb_scan(embed, 500, 50, selection='leaf', cluster_selection_epsilon=0.15)
@@ -338,12 +361,17 @@ plt.show()
 #%%
 
 ###
-# Calculate and plot range of movement, average frame to frame velocity, and
-# overlap of movements for each channel
+# Calculate and plot average and peak frame to frame velocity and acceleration
+# for each channel; calculate and plot overlap of movements over all channels
 ###
 
 average_velocities = []
 std_devs_velocity = []
+peak_velocities = []
+
+average_accelerations = []
+std_devs_acceleration = []
+peak_accelerations = []
 
 # Initialize an empty list to store all keypress events
 all_keypress_events = []
@@ -363,20 +391,26 @@ for i, channel in enumerate(channels):
 # Sort the events list by peak_frame primarily, and then by frame to maintain the sequence
 all_keypress_events_sorted = sorted(all_keypress_events, key=lambda x: (x[3], x[0]))
 
-# Calculate the range of motion for each channel
-ranges_of_motion = []
-for i, channel in enumerate(channels):
-    channel_data = y_values_combined[:, i]
-    range_of_motion = np.max(channel_data) - np.min(channel_data)
-    ranges_of_motion.append(range_of_motion)
-
-# Calculate average frame-to-frame velocity for each channel and its standard deviation
+# Calculate average and peak frame-to-frame velocity and acceleration for each channel
 for i in range(y_values_combined.shape[1]):
     velocities = np.diff(y_values_combined[:, i])
+    accelerations = np.diff(velocities)
+    
     average_velocity = np.mean(np.abs(velocities))
     std_dev_velocity = np.std(np.abs(velocities))
+    peak_velocity = np.max(np.abs(velocities))
+    
+    average_acceleration = np.mean(np.abs(accelerations))
+    std_dev_acceleration = np.std(np.abs(accelerations))
+    peak_acceleration = np.max(np.abs(accelerations))
+    
     average_velocities.append(average_velocity)
     std_devs_velocity.append(std_dev_velocity)
+    peak_velocities.append(peak_velocity)
+    
+    average_accelerations.append(average_acceleration)
+    std_devs_acceleration.append(std_dev_acceleration)
+    peak_accelerations.append(peak_acceleration)
     
 # Calculate overlap sequentially for each offset and subsequent onset pair
 total_overlap_frames = 0
@@ -392,34 +426,38 @@ for i in range(len(all_keypress_events_sorted) - 1):
 # Calculate percent overlap
 percent_overlap = total_overlap_frames / len(y_values_combined) * 100
 
-# Amplitude plot data
-df_range_of_motion = pd.DataFrame({
-    'Channel': channels,
-    'Range of Motion': ranges_of_motion
-})
-
-# Velocity plot data
+# Velocity plot data including peak velocities
 df_velocity = pd.DataFrame({
     'Channel': channels,
     'Average Velocity': average_velocities,
+    'Peak Velocity': peak_velocities,
     'STD': std_devs_velocity
 })
 
-# Plotting the range of motion for each channel
-plt.figure(figsize=(10, 6))
-sns.barplot(x='Channel', y='Range of Motion', data=df_range_of_motion, palette='viridis')
-plt.title('Range of Motion for Each Channel')
-plt.ylabel('Range of Motion')
-plt.xlabel('Channel')
+# Acceleration plot data including peak accelerations
+df_acceleration = pd.DataFrame({
+    'Channel': channels,
+    'Average Acceleration': average_accelerations,
+    'Peak Acceleration': peak_accelerations,
+    'STD': std_devs_acceleration
+})
+
+# Plotting average and peak velocities for each channel
+plt.figure(figsize=(12, 6))
+ax = sns.barplot(x='Channel', y='Average Velocity', data=df_velocity, color='skyblue', label='Average Velocity')
+sns.scatterplot(x='Channel', y='Peak Velocity', data=df_velocity, color='red', s=100, label='Peak Velocity', zorder=5, ax=ax)
+plt.title('Average and Peak Velocities for Each Channel')
+plt.ylabel('Velocity')
+plt.legend()
 plt.show()
 
-# Plot average velocity for each channel
-plt.figure(figsize=(10, 6))
-sns.barplot(x='Channel', y='Average Velocity', data=df_velocity, capsize=.1, palette='viridis')
-plt.errorbar(x=range(len(channels)), y=df_velocity['Average Velocity'], yerr=df_velocity['STD'], fmt='none', c='black', capsize=5)
-plt.title('Average Velocities for Each Channel')
-plt.ylabel('Average Velocity')
-plt.xlabel('Channel')
+# Plotting average and peak accelerations for each channel
+plt.figure(figsize=(12, 6))
+ax = sns.barplot(x='Channel', y='Average Acceleration', data=df_acceleration, color='lightgreen', label='Average Acceleration')
+sns.scatterplot(x='Channel', y='Peak Acceleration', data=df_acceleration, color='darkgreen', s=100, label='Peak Acceleration', zorder=5, ax=ax)
+plt.title('Average and Peak Accelerations for Each Channel')
+plt.ylabel('Acceleration')
+plt.legend()
 plt.show()
 
 # Plot percent of frames detected as overlap
@@ -434,6 +472,4 @@ print(f"Total percent overlap among channels: {percent_overlap:.2f}%")
 
 #%%
 
-# TODO Calculate distance between vectors using Jensen-Shannon Divergence. 
 # TODO     Calculate sub-slices of trial embeddings to then calculate divergence within and between trials
-# TODO Calculate statistical differences between vectors using Kolomgorov-Smirnov Test
