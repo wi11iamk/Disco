@@ -274,8 +274,6 @@ fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_
 # channels and integrals of each channel
 ###
 
-frame_rate = 120  # fps of DLC tracking data
-y_threshold = 460 # keypresses cannot be detected beneath this value
 h5_path = '/Users/wi11iamk/Documents/GitHub/HUB_DT/sample_data/027_D1DLC_resnet50_keyTest027Jan12shuffle1_400000.h5'
 
 # Define channels and colors for each channel
@@ -289,7 +287,7 @@ def find_onset_offset(derivative, peak_index, window=15):
     return onset_index, offset_index
 
 # Function to normalize peak frequency to Hz for the given window
-def normalize_peaks_to_hz(total_peaks, frames_in_window, frame_rate=frame_rate):
+def normalize_peaks_to_hz(total_peaks, frames_in_window, frame_rate=120):
     duration_seconds = frames_in_window / frame_rate
     frequency_hz = total_peaks / duration_seconds
     return frequency_hz
@@ -308,6 +306,7 @@ normalized_areas_percent = [(area / total_area) * 100 for area in area_under_cur
 
 total_peaks_across_channels = 0
 keypress_counts = [0] * 4
+y_threshold = 460 # keypresses cannot be detected beneath this value
 onset_offset_data = {channel: [] for channel in channels}
 fig, ax = plt.subplots(figsize=(14, 6))
 x_range = np.arange(syn_frame_start, syn_frame_start + len(y_values_combined))
@@ -327,16 +326,16 @@ for i, channel_name in enumerate(channels):
         ax.plot(onset + syn_frame_start, y_values_combined[onset, i], 'go')
         ax.plot(offset + syn_frame_start, y_values_combined[offset, i], 'mo')
         onset_offset_data[channel_name].append((onset + syn_frame_start, offset + syn_frame_start))
+        
+# Calculate normalized frequency in Hz
+normalized_frequency_hz = normalize_peaks_to_hz(total_peaks_across_channels, syn_frame_end - syn_frame_start + 1)
 
 ax.set_title('Time Series of Channels with Detected Keypresses')
 ax.set_xlabel('Frame Index')
 ax.set_ylabel('Y Position')
+ax.text(0.3, 0.1, s=f"Normalized Frequency: {normalized_frequency_hz: .3f} Hz", transform=ax.transAxes, ha='center', va='center', color='red')
 ax.legend()
 plt.show()
-
-# Calculate and display normalized frequency in Hz
-normalized_frequency_hz = normalize_peaks_to_hz(total_peaks_across_channels, syn_frame_end - syn_frame_start + 1, frame_rate)
-print(f"Normalized Frequency: {normalized_frequency_hz} Hz")
 
 # Plot normalized and non-negative curves
 fig2, ax2 = plt.subplots(figsize=(14, 6))
