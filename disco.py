@@ -66,7 +66,9 @@ plt.scatter(embed[:, 0], embed[:, 1], s=0.25, c='blue', alpha=0.25)
 
 ###
 # Calculate and plot a gaussian KDE over embedded data; calculate a list of
-# slices from the embedding and plot each as an overlay atop the gaussian KDE
+# slices from the embedding and plot each as an overlay atop the gaussian KDE;
+# calculate the Jensen-Shannon divergence and Kolmogorov-Smirnov statistic for
+# each slice as a probability vector or data sample, respectively
 ###
 
 # Define the fixed grid based on the entire dataset
@@ -135,7 +137,7 @@ for i, vector in enumerate(probability_vectors):
     else:
         print(f"Vector {i} does not sum to 1.0; sum is {vector_sum}.")
         
-# Calculate pairwise JS divergence test between listed probability vectors
+# Calculate pairwise JS divergence test between listed probability_vectors
 for i in range(1, len(probability_vectors) - 1):  # Start from 1 to skip the first vector and go to len-1 for pairwise
     js_divergence = jensenshannon(probability_vectors[i], probability_vectors[i + 1])
     print(f"Jansen-Shannon Divergence between Vector {i} and Vector {i + 1}: {js_divergence}")
@@ -174,8 +176,9 @@ fig2 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, noise=Fal
 #%%
 
 ### 
-# Calcuate the average, start frame of the nearest average, number of uses,
-# total time and percent of time in use for each synergy (label)
+# Calcuate the mean length in frames of each label; store the first frame of
+# the first five occurrences of each label in a list of tuples; calculate total
+# uses and percent of time in use for each label
 ###
 
 a_labels = np.reshape(labels, (-1, 1))
@@ -270,8 +273,8 @@ fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_
 
 ###
 # Calculate and plot the time series of each channel, the frame of each 
-# keypress, the onset and offset of each keypress; calculate and plot normal
-# channels and integrals of each channel
+# keypress, the onset and offset of each keypress; calculate and plot each 
+# channel to a normalised frame; calculate integrals of each channel
 ###
 
 h5_path = '/Users/wi11iamk/Documents/GitHub/HUB_DT/sample_data/027_D1DLC_resnet50_keyTest027Jan12shuffle1_400000.h5'
@@ -476,3 +479,6 @@ plt.show()
 print(f"Total percent overlap among channels: {percent_overlap:.2f}%")
 
 #%%
+
+# TODO Convert CKPS calculations from Matlab to Python and add
+# TODO Convert micro-online and micro-offline code from Matlab to Python and add
