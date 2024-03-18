@@ -15,15 +15,13 @@ import h5py, numpy as np, pandas as pd, umap, matplotlib.pyplot as plt, seaborn 
 
 from hubdt import data_loading, behav_session_params, wavelets, hdb_clustering, b_utils
 
-from scipy.signal import find_peaks
+from scipy.integrate import simps
 
-from scipy.stats import gaussian_kde
+from scipy.signal import find_peaks
 
 from scipy.spatial.distance import jensenshannon
 
-from scipy.integrate import simps
-
-from scipy.stats import ks_2samp
+from scipy.stats import gaussian_kde, ks_2samp
 
 #%%
 
@@ -159,8 +157,8 @@ for i in range(len(slice_data_segments) - 1):
 #%%
 
 ###
-# Generate HDBSCAN cluster object, labels, and probabilities for embedded data; 
-# plot cluster distance tree; plot cluster labels atop embedded data
+# Perform HDBSCAN clustering to obtain labels and probabilities from embedded
+# data; plot cluster distance tree; plot cluster labels atop embedded data
 ###
 
 clusterobj = hdb_clustering.hdb_scan(embed, 500, 50, selection='leaf', cluster_selection_epsilon=0.15)
@@ -176,12 +174,13 @@ fig2 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, noise=Fal
 #%%
 
 ### 
-# Calcuate the average, min, and max lengths, number of uses, total time and 
-# percent of time in use for each synergy
+# Calcuate the average, start frame of the nearest average, number of uses,
+# total time and percent of time in use for each synergy (label)
 ###
 
 a_labels = np.reshape(labels, (-1, 1))
 
+# Function to tally continuous label occurrences, allowing for a threshold
 def calculate_label_data(arr, threshold=0):
     continuous_counts = {}
     current_val = None
@@ -225,27 +224,30 @@ def calculate_label_data(arr, threshold=0):
     
     return sorted_results
 
+# Function to update or initialize label data in 'continuous_counts'
 def finalize_count(continuous_counts, val, count, start_frame):
-    if val in continuous_counts:
-        continuous_counts[val].setdefault('counts', []).append(count)
-        continuous_counts[val].setdefault('start_frames', []).append(start_frame)
-    else:
-        continuous_counts[val] = {'counts': [count], 'start_frames': [start_frame]}
+    if val not in continuous_counts:
+        continuous_counts[val] = {'counts': [], 'start_frames': []}
+    continuous_counts[val]['counts'].append(count)
+    continuous_counts[val]['start_frames'].append(start_frame)
 
+# Function to compute statistics for each label based on its counts
 def process_counts(continuous_counts):
-    total_all_frames = sum(sum(v['counts']) for v in continuous_counts.values())
+    total_all_frames = sum(sum(c for c in v['counts']) for v in continuous_counts.values())
     for val, data in continuous_counts.items():
-        counts, start_frames = data['counts'], data['start_frames']
-        total_frames = sum(counts)
-        max_count = max(counts)
-        max_count_index = counts.index(max_count)
-        max_count_start_frame = start_frames[max_count_index]
+        counts = data['counts']
+        start_frames = data['start_frames']
+        mean_count = np.mean(counts)
+        first_five = start_frames[:5]
+
         data['stats'] = (
-            np.mean(counts), min(counts), max_count, max_count_start_frame,
-            len(counts), total_frames, (total_frames / total_all_frames) * 100
+            mean_count,  # Mean length in frames
+            *first_five,  # The first frames of the first five occurrences
+            len(counts),  # Total number of occurrences
+            (sum(counts) / total_all_frames) * 100  # % of total frames
         )
 
-a_labels_data = calculate_label_data(a_labels, threshold=10)
+a_labels_data = calculate_label_data(a_labels, threshold=15)
 
 #%%
 
@@ -444,19 +446,23 @@ df_acceleration = pd.DataFrame({
 
 # Plotting average and peak velocities for each channel
 plt.figure(figsize=(12, 6))
-ax = sns.barplot(x='Channel', y='Average Velocity', data=df_velocity, color='skyblue', label='Average Velocity')
-sns.scatterplot(x='Channel', y='Peak Velocity', data=df_velocity, color='red', s=100, label='Peak Velocity', zorder=5, ax=ax)
-plt.title('Average and Peak Velocities for Each Channel')
+sns.barplot(x='Channel', y='Average Velocity', data=df_velocity, palette='Blues', label='Average Velocity')
+plt.errorbar(x=np.arange(len(channels)), y=average_velocities, yerr=std_devs_velocity, fmt='none', c='black', capsize=5, label='STD Velocity')
+sns.scatterplot(x=np.arange(len(channels)), y=peak_velocities, color='red', s=100, label='Peak Velocity', zorder=5)
+plt.title('Average and Peak Velocities for Each Channel with STD')
 plt.ylabel('Velocity')
+plt.xticks(ticks=np.arange(len(channels)), labels=channels)
 plt.legend()
 plt.show()
 
 # Plotting average and peak accelerations for each channel
 plt.figure(figsize=(12, 6))
-ax = sns.barplot(x='Channel', y='Average Acceleration', data=df_acceleration, color='lightgreen', label='Average Acceleration')
-sns.scatterplot(x='Channel', y='Peak Acceleration', data=df_acceleration, color='darkgreen', s=100, label='Peak Acceleration', zorder=5, ax=ax)
-plt.title('Average and Peak Accelerations for Each Channel')
+sns.barplot(x='Channel', y='Average Acceleration', data=df_acceleration, palette='Greens', label='Average Acceleration')
+plt.errorbar(x=np.arange(len(channels)), y=average_accelerations, yerr=std_devs_acceleration, fmt='none', c='black', capsize=5, label='STD Acceleration')
+sns.scatterplot(x=np.arange(len(channels)), y=peak_accelerations, color='darkgreen', s=100, label='Peak Acceleration', zorder=5)
+plt.title('Average and Peak Accelerations for Each Channel with STD')
 plt.ylabel('Acceleration')
+plt.xticks(ticks=np.arange(len(channels)), labels=channels)
 plt.legend()
 plt.show()
 
@@ -471,5 +477,3 @@ plt.show()
 print(f"Total percent overlap among channels: {percent_overlap:.2f}%")
 
 #%%
-
-# TODO     Calculate sub-slices of trial embeddings to then calculate divergence within and between trials
