@@ -260,8 +260,8 @@ a_labels_data = calculate_label_data(a_labels, threshold=15)
 # timeseries calculations are based on this range
 ###
 
-syn_frame_start = 57955
-syn_frame_end = (57955+130)
+syn_frame_start = 2500
+syn_frame_end = 2640
 
 fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 8, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
 
@@ -305,7 +305,6 @@ positive_y_values = np.abs(normalized_y_values)
 
 area_under_curve = [simps(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
 total_area = sum(area_under_curve)
-normalized_areas_percent = [(area / total_area) * 100 for area in area_under_curve]
 
 total_peaks_across_channels = 0
 keypress_counts = [0] * 4
@@ -316,7 +315,7 @@ x_range = np.arange(syn_frame_start, syn_frame_start + len(y_values_combined))
 
 for i, channel_name in enumerate(channels):
     derivative = np.diff(y_values_combined[:, i], prepend=y_values_combined[0, i])
-    peaks, _ = find_peaks(y_values_combined[:, i], prominence=26)
+    peaks, _ = find_peaks(y_values_combined[:, i], prominence=20)
     valid_peaks = [peak for peak in peaks if y_values_combined[peak, i] > y_threshold]  # Filter peaks based on threshold
 
     keypress_counts[i] = len(valid_peaks)
@@ -336,7 +335,7 @@ normalized_frequency_hz = normalize_peaks_to_hz(total_peaks_across_channels, syn
 ax.set_title('Time Series of Channels with Detected Keypresses')
 ax.set_xlabel('Frame Index')
 ax.set_ylabel('Y Position')
-ax.text(0.3, 0.1, s=f"Normalized Frequency: {normalized_frequency_hz: .3f} Hz", transform=ax.transAxes, ha='center', va='center', color='red')
+ax.text(0.125, 0.1, s=f"Normalized Frequency: {normalized_frequency_hz: .3f} Hz", transform=ax.transAxes, ha='center', va='center', color='red')
 ax.legend()
 plt.show()
 
@@ -350,39 +349,43 @@ ax2.set_ylabel('Adjusted Y Position')
 ax2.legend()
 plt.show()
 
-# Plot the normalized areas as a percentage for each channel
-df_normalized_areas = pd.DataFrame({
+# Integral plot data
+df_areas = pd.DataFrame({
     'Channel': channels,
-    'Normalized Area (%)': normalized_areas_percent
+    'Area Under Curve': area_under_curve
 })
+
+# Plot the areas beneath each channel
 plt.figure(figsize=(10, 6))
-sns.barplot(x='Channel', y='Normalized Area (%)', data=df_normalized_areas, palette='viridis')
-plt.title('Normalized Area Contribution of Each Channel')
+sns.barplot(x='Channel', y='Area Under Curve', data=df_areas, palette='viridis')
+plt.title('Area Contribution of Each Channel')
 plt.xlabel('Channel')
-plt.ylabel('Normalized Area (%)')
+plt.ylabel('Area')
 plt.show()
 
 #%%
 
 ###
-# Calculate and plot average and peak frame to frame velocity and acceleration
-# for each channel; calculate and plot overlap of movements over all channels
+# Calculate and plot average frame to frame velocity and acceleration for each
+# channel; calculate and plot overlap of movements over all channels
 ###
 
-average_velocities = []
-std_devs_velocity = []
-peak_velocities = []
+positive_velocities = []
+negative_velocities = []
+std_devs_pos_velocity = []
+std_devs_neg_velocity = []
 
-average_accelerations = []
-std_devs_acceleration = []
-peak_accelerations = []
+positive_accelerations = []
+negative_accelerations = []
+std_devs_pos_acceleration = []
+std_devs_neg_acceleration = []
 
 # Initialize an empty list to store all keypress events
 all_keypress_events = []
 
 # Collect keypress events for each channel, applying the threshold
 for i, channel in enumerate(channels):
-    peaks, _ = find_peaks(y_values_combined[:, i], prominence=26)
+    peaks, _ = find_peaks(y_values_combined[:, i], prominence=20)
     # Filter peaks based on the y-value threshold
     valid_peaks = [peak for peak in peaks if y_values_combined[peak, i] > y_threshold]
     for peak in valid_peaks:
@@ -395,28 +398,31 @@ for i, channel in enumerate(channels):
 # Sort the events list by peak_frame primarily, and then by frame to maintain the sequence
 all_keypress_events_sorted = sorted(all_keypress_events, key=lambda x: (x[3], x[0]))
 
-# Calculate average and peak frame-to-frame velocity and acceleration for each channel
+# Calculating velocities and accelerations
 for i in range(y_values_combined.shape[1]):
     velocities = np.diff(y_values_combined[:, i])
     accelerations = np.diff(velocities)
     
-    average_velocity = np.mean(np.abs(velocities))
-    std_dev_velocity = np.std(np.abs(velocities))
-    peak_velocity = np.max(np.abs(velocities))
+    # Separate positive and negative velocities
+    pos_velocities = velocities[velocities > 0]
+    neg_velocities = velocities[velocities < 0]
     
-    average_acceleration = np.mean(np.abs(accelerations))
-    std_dev_acceleration = np.std(np.abs(accelerations))
-    peak_acceleration = np.max(np.abs(accelerations))
+    # Separate positive and negative accelerations
+    pos_accelerations = accelerations[accelerations > 0]
+    neg_accelerations = accelerations[accelerations < 0]
     
-    average_velocities.append(average_velocity)
-    std_devs_velocity.append(std_dev_velocity)
-    peak_velocities.append(peak_velocity)
+    # Calculate averages and standard deviations
+    positive_velocities.append(np.mean(pos_velocities))
+    negative_velocities.append(np.mean(neg_velocities))
+    std_devs_pos_velocity.append(np.std(pos_velocities))
+    std_devs_neg_velocity.append(np.std(neg_velocities))
     
-    average_accelerations.append(average_acceleration)
-    std_devs_acceleration.append(std_dev_acceleration)
-    peak_accelerations.append(peak_acceleration)
+    positive_accelerations.append(np.mean(pos_accelerations))
+    negative_accelerations.append(np.mean(neg_accelerations))
+    std_devs_pos_acceleration.append(np.std(pos_accelerations))
+    std_devs_neg_acceleration.append(np.std(neg_accelerations))
     
-# Calculate overlap sequentially for each offset and subsequent onset pair
+# Calculate overlap sequentially for each offset[i] -> onset[i+1] pair
 total_overlap_frames = 0
 for i in range(len(all_keypress_events_sorted) - 1):
     current_event = all_keypress_events_sorted[i]
@@ -430,41 +436,41 @@ for i in range(len(all_keypress_events_sorted) - 1):
 # Calculate percent overlap
 percent_overlap = total_overlap_frames / len(y_values_combined) * 100
 
-# Velocity plot data including peak velocities
-df_velocity = pd.DataFrame({
-    'Channel': channels,
-    'Average Velocity': average_velocities,
-    'Peak Velocity': peak_velocities,
-    'STD': std_devs_velocity
+# Velocity plot data
+df_velocities = pd.DataFrame({
+    'Channel': channels * 2,
+    'Velocity Type': ['Positive Velocity'] * len(channels) + ['Negative Velocity'] * len(channels),
+    'Average Velocity': positive_velocities + negative_velocities,
+    'STD': std_devs_pos_velocity + std_devs_neg_velocity
 })
 
-# Acceleration plot data including peak accelerations
-df_acceleration = pd.DataFrame({
-    'Channel': channels,
-    'Average Acceleration': average_accelerations,
-    'Peak Acceleration': peak_accelerations,
-    'STD': std_devs_acceleration
+# Acceleration plot data
+df_accelerations = pd.DataFrame({
+    'Channel': channels * 2,
+    'Acceleration Type': ['Positive Acceleration'] * len(channels) + ['Negative Acceleration'] * len(channels),
+    'Average Acceleration': positive_accelerations + negative_accelerations,
+    'STD': std_devs_pos_acceleration + std_devs_neg_acceleration
 })
 
-# Plotting average and peak velocities for each channel
+# Plotting velocities
 plt.figure(figsize=(12, 6))
-sns.barplot(x='Channel', y='Average Velocity', data=df_velocity, palette='Blues', label='Average Velocity')
-plt.errorbar(x=np.arange(len(channels)), y=average_velocities, yerr=std_devs_velocity, fmt='none', c='black', capsize=5, label='STD Velocity')
-sns.scatterplot(x=np.arange(len(channels)), y=peak_velocities, color='red', s=100, label='Peak Velocity', zorder=5)
-plt.title('Average and Peak Velocities for Each Channel with STD')
+ax = sns.barplot(x='Channel', y='Average Velocity', hue='Velocity Type', data=df_velocities, palette='Blues', dodge=True)
+for i, channel in enumerate(channels):
+    ax.errorbar(i - 0.2, positive_velocities[i], yerr=std_devs_pos_velocity[i], fmt='none', color='darkblue', capsize=3)
+    ax.errorbar(i + 0.2, negative_velocities[i], yerr=std_devs_neg_velocity[i], fmt='none', color='darkblue', capsize=3)
+plt.title('Average Velocities for Each Channel')
 plt.ylabel('Velocity')
-plt.xticks(ticks=np.arange(len(channels)), labels=channels)
 plt.legend()
 plt.show()
 
-# Plotting average and peak accelerations for each channel
+# Plotting accelerations
 plt.figure(figsize=(12, 6))
-sns.barplot(x='Channel', y='Average Acceleration', data=df_acceleration, palette='Greens', label='Average Acceleration')
-plt.errorbar(x=np.arange(len(channels)), y=average_accelerations, yerr=std_devs_acceleration, fmt='none', c='black', capsize=5, label='STD Acceleration')
-sns.scatterplot(x=np.arange(len(channels)), y=peak_accelerations, color='darkgreen', s=100, label='Peak Acceleration', zorder=5)
-plt.title('Average and Peak Accelerations for Each Channel with STD')
+ax = sns.barplot(x='Channel', y='Average Acceleration', hue='Acceleration Type', data=df_accelerations, palette='Greens', dodge=True)
+for i, channel in enumerate(channels):
+    ax.errorbar(i - 0.2, positive_accelerations[i], yerr=std_devs_pos_acceleration[i], fmt='none', color='darkgreen', capsize=3)
+    ax.errorbar(i + 0.2, negative_accelerations[i], yerr=std_devs_neg_acceleration[i], fmt='none', color='darkgreen', capsize=3)
+plt.title('Average Accelerations for Each Channel')
 plt.ylabel('Acceleration')
-plt.xticks(ticks=np.arange(len(channels)), labels=channels)
 plt.legend()
 plt.show()
 
