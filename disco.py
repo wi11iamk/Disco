@@ -13,7 +13,7 @@ Created on Wed Feb 28 19:55:56 2024
 
 import h5py, numpy as np, pandas as pd, umap, matplotlib.pyplot as plt, seaborn as sns
 
-from hubdt import data_loading, behav_session_params, wavelets, hdb_clustering, b_utils
+from hubdt import data_loading, behav_session_params, wavelets, t_sne, hdb_clustering, b_utils
 
 from scipy.integrate import simps
 
@@ -44,7 +44,7 @@ tracking = data_loading.load_tracking (mysesh, dlc=True, feats=features)
 # store the wavelet projection into a variable and then transpose the output
 ###
 
-scales, frequencies = wavelets.calculate_scales (0.75, 2.25, 120, 4)
+scales, frequencies = wavelets.calculate_scales (0.75, 2.75, 120, 5)
 
 proj = wavelets.wavelet_transform_np (tracking, scales, frequencies, 120)
 
@@ -71,12 +71,6 @@ plt.scatter(embed[:, 0], embed[:, 1], s=0.25, c='blue', alpha=0.25)
 # each slice as a probability vector or data sample, respectively
 ###
 
-# Define the fixed grid based on the entire dataset
-x_min, x_max = embed[:, 0].min(), embed[:, 0].max()
-y_min, y_max = embed[:, 1].min(), embed[:, 1].max()
-x_grid, y_grid = np.mgrid[x_min:x_max:292j, y_min:y_max:292j]  # 292j for a 292x292 grid
-grid_coords = np.vstack([x_grid.ravel(), y_grid.ravel()])
-
 # Function to calculate density on the fixed grid
 def calc_density_on_fixed_grid(data, grid_coords):
     kde = gaussian_kde(data.T)
@@ -89,58 +83,69 @@ def normalize_grid(grid):
     normalized = flattened / np.sum(flattened)
     return normalized
 
-# Calculate the density for the entire dataset
-entire_data_density = calc_density_on_fixed_grid(embed, grid_coords)
+# Calculate a density grid for the entire dataset
+entire_data_density, x_grid, y_grid = t_sne.calc_density(embed)
+grid_coords = np.vstack([x_grid.ravel(), y_grid.ravel()])
 
-# Define slices (including an empty tuple for the entire dataset)
-slices = [(), (0, 1200), (14400, 15600), (84508, 85828)]
+# Initialize a dictionary to store frame lengths for each trial
+trial = {}
 
-# Initialize container to store normalized probability vectors
+# Total number of trials
+total_trials = 36
+
+# Populate the dictionary with slices
+for i in range(total_trials):
+    key = f"{i+1}"  # Key name (e.g., 't1')
+    value = (i*1200, (i+1)*1200-1)  # Range for each slice
+    trial[key] = value
+
+# Define slices (you may use an empty tuple for the entire dataset)
+slices = [trial['1'],trial['5'],trial['12'],trial['35']]
+
+# Initialize container for normalized probability vectors and slice data segments
 probability_vectors = []
-# Initialize a list to store slice_data segments for KS test
 slice_data_segments = []
 
-# Plotting
-fig, axes = plt.subplots(1, len(slices), figsize=(24, 4))
+# Prepare the plotting area based on the number of slices with actual data
+fig, axes = plt.subplots(1, max(len(slices), 1), figsize=((len(slices)*6), 4)) if len(slices) > 1 else plt.subplots(figsize=(6, 4))
+axes = np.atleast_1d(axes)  # Ensure axes is always iterable
 
+# Iterate through slices to calculate densities and append to lists
 for i, sl in enumerate(slices):
-    ax = axes[i]
-    # Plot the entire dataset's density map as background
+    ax = axes[i] if len(slices) > 1 else axes
+    # Check if there's a slice defined
     pcm = ax.pcolormesh(x_grid, y_grid, entire_data_density, shading='auto', cmap='plasma')
+    ax.set_title('Entire Dataset Density' if not sl else f'Slice {i+1}: {sl[0]}-{sl[1]}')
     fig.colorbar(pcm, ax=ax, label='Density')
-    
-    # Calculate and overlay the slice if specified
-    if sl:  # For slices, overlay the slice data and include in legend
+    if sl:
         slice_data = embed[sl[0]:sl[1], :]
-        slice_data_segments.append(slice_data)
+        slice_data_segments.append(slice_data)  # Append the slice data for KS tests
         slice_density = calc_density_on_fixed_grid(slice_data, grid_coords)
         slice_vector = normalize_grid(slice_density)
-        probability_vectors.append(slice_vector)  # Store the probability vector
+        probability_vectors.append(slice_vector)  # Append the normalized probability vector
         
-        # Scatter plot for slice data with a label for legend
-        ax.scatter(slice_data[:, 0], slice_data[:, 1], color='deepskyblue', s=0.75, alpha=0.33, label=f'Slice {i} Data Points')
-        ax.set_title(f'Slice {i}: {sl[0]}-{sl[1]}')
-        ax.legend()  # Only call legend when there are labeled artists
+        # Scatter plot for the slice data
+        ax.scatter(slice_data[:, 0], slice_data[:, 1], color='deepskyblue', s=0.75, alpha=0.33, label=f'Slice {i+1} Data Points')
+        ax.set_title(f'Slice {i+1}: {sl[0]}-{sl[1]}')
     else:
-        entire_vector = normalize_grid(entire_data_density)
-        probability_vectors.insert(0, entire_vector)  # Ensure the entire dataset vector is first
-        ax.set_title('Entire Dataset')
-        
+        # For an empty slice definition, skip or handle differently
+        continue
+    ax.legend()
+
 plt.tight_layout()
 plt.show()
 
-# Ensure that each probability vector stored in the list sums to 1 within a specified tolerance
+# Example of ensuring probability vectors sum to 1
 for i, vector in enumerate(probability_vectors):
-    vector_sum = np.sum(vector)
-    if np.isclose(vector_sum, 1.0, atol=1e-8):  # atol is the tolerance level
-        print(f"Vector {i} sums to 1.0 within tolerance.")
+    if np.isclose(np.sum(vector), 1.0, atol=1e-8):
+        print(f"Vector {i+1} sums to 1.0 within tolerance.")
     else:
-        print(f"Vector {i} does not sum to 1.0; sum is {vector_sum}.")
+        print(f"Vector {i+1} does not sum to 1.0; sum is {np.sum(vector)}.")
         
 # Calculate pairwise JS divergence test between listed probability_vectors
-for i in range(1, len(probability_vectors) - 1):  # Start from 1 to skip the first vector and go to len-1 for pairwise
+for i in range(len(probability_vectors) - 1):
     js_divergence = jensenshannon(probability_vectors[i], probability_vectors[i + 1])
-    print(f"Jansen-Shannon Divergence between Vector {i} and Vector {i + 1}: {js_divergence}")
+    print(f"Jansen-Shannon Divergence between Vector {i+1} and Vector {i + 2}: {js_divergence}")
 
 # Calculate pairwise KS tests between listed slice_data_segments
 for i in range(len(slice_data_segments) - 1):
@@ -251,6 +256,45 @@ def process_counts(continuous_counts):
         )
 
 a_labels_data = calculate_label_data(a_labels, threshold=15)
+
+#%%
+
+###
+# Calculate the distribution of labels within specified slices=[]
+###
+
+# Count the occurrences of each non-negative integer within each slice
+slice_counts = []
+for sl in slices:
+    slice_a_labels = a_labels[sl[0]:sl[1]]
+    unique, counts = np.unique(slice_a_labels, return_counts=True)
+    slice_counts.append(dict(zip(unique, counts)))
+
+# Assuming the x axis should span all unique non-negative ints found across all slices
+all_ints = set().union(*[list(counts.keys()) for counts in slice_counts])
+max_int = max(all_ints)
+x_values = np.arange(max_int + 1)  # +1 because np.arange is exclusive at the end
+
+# Prepare data for plotting
+plot_data = np.zeros((len(slices), max_int + 1))
+for i, counts in enumerate(slice_counts):
+    for int_value, count in counts.items():
+        plot_data[i, int_value] = count
+
+# Plotting
+fig, ax = plt.subplots(figsize=(12, 6))
+width = 0.2  # Bar width
+for i in range(len(slices)):
+    ax.bar(x_values + i*width, plot_data[i], width, label=f'Slice {i+1}')
+
+ax.set_xticks(x_values + width / 2)
+ax.set_xticklabels(x_values)
+ax.set_xlabel('Int Values')
+ax.set_ylabel('Occurrences')
+ax.set_title('Occurrences of Non-negative Ints within Each Slice')
+ax.legend()
+
+plt.show()
 
 #%%
 
