@@ -11,13 +11,13 @@ Created on Wed Feb 28 19:55:56 2024
 # Import necessary libraries
 ###
 
-import h5py, numpy as np, pandas as pd, umap, matplotlib.pyplot as plt, seaborn as sns
+import numpy as np, pandas as pd, umap, matplotlib.pyplot as plt, seaborn as sns
 
 from hubdt import data_loading, behav_session_params, wavelets, t_sne, hdb_clustering, b_utils
 
 from scipy.integrate import simps
 
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, savgol_filter
 
 from scipy.spatial.distance import jensenshannon
 
@@ -26,7 +26,8 @@ from scipy.stats import gaussian_kde, ks_2samp
 #%%
 
 ###
-# Initialise the HUB-DT session; import all DLC features and tracking data
+# Initialise the HUB-DT session; import all DLC features and tracking data;
+# apply Savitzky-Golay filter to each y time series 
 ###
 
 mysesh = behav_session_params.load_session_params ('Mine')
@@ -37,6 +38,13 @@ del features[4:7] # Delete features, should you want to
 
 tracking = data_loading.load_tracking (mysesh, dlc=True, feats=features)
 
+# Create variables for and apply Savitzky-Golay filter
+tracking_filtered = tracking.copy() # Create copy of tracking to filter
+window_length = 20  # Choose an odd number for the window size
+polyorder = 2  # Polynomial order
+for col in range(1, 8, 2):  # Iterate over y-value columns (1, 3, 5, 7)
+    tracking_filtered[:, col] = savgol_filter(tracking[:, col], window_length, polyorder)
+
 #%%
 
 ###
@@ -46,7 +54,7 @@ tracking = data_loading.load_tracking (mysesh, dlc=True, feats=features)
 
 scales, frequencies = wavelets.calculate_scales (0.75, 2.75, 120, 5)
 
-proj = wavelets.wavelet_transform_np (tracking, scales, frequencies, 120)
+proj = wavelets.wavelet_transform_np (tracking_filtered, scales, frequencies, 120)
 
 proj = np.transpose(proj)
 
@@ -95,7 +103,7 @@ total_trials = 36
 
 # Populate the dictionary with slices
 for i in range(total_trials):
-    key = f"{i+1}"  # Key name (e.g., 't1')
+    key = f"{i+1}"  # Key name (e.g., '1' for trial 1)
     value = (i*1200, (i+1)*1200-1)  # Range for each slice
     trial[key] = value
 
@@ -135,7 +143,7 @@ for i, sl in enumerate(slices):
 plt.tight_layout()
 plt.show()
 
-# Example of ensuring probability vectors sum to 1
+# Ensure probability vectors sum to 1 within tolerance
 for i, vector in enumerate(probability_vectors):
     if np.isclose(np.sum(vector), 1.0, atol=1e-8):
         print(f"Vector {i+1} sums to 1.0 within tolerance.")
@@ -291,7 +299,7 @@ ax.set_xticks(x_values + width / 2)
 ax.set_xticklabels(x_values)
 ax.set_xlabel('Int Values')
 ax.set_ylabel('Occurrences')
-ax.set_title('Occurrences of Non-negative Ints within Each Slice')
+ax.set_title('Occurrences of Labels in each Trial')
 ax.legend()
 
 plt.show()
@@ -304,10 +312,10 @@ plt.show()
 # timeseries calculations are based on this range
 ###
 
-syn_frame_start = 2500
-syn_frame_end = 2640
+syn_frame_start = 16685
+syn_frame_end = 16685+60
 
-fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 8, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 16, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
 
 #fig4 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, compare_to=True, comp_label=8)
 
@@ -320,8 +328,6 @@ fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_
 # keypress, the onset and offset of each keypress; calculate and plot each 
 # channel to a normalised frame; calculate integrals of each channel
 ###
-
-h5_path = '/Users/wi11iamk/Documents/GitHub/HUB_DT/sample_data/027_D1DLC_resnet50_keyTest027Jan12shuffle1_400000.h5'
 
 # Define channels and colors for each channel
 channels = ['Little', 'Ring', 'Middle', 'Index']
@@ -339,27 +345,27 @@ def normalize_peaks_to_hz(total_peaks, frames_in_window, frame_rate=120):
     frequency_hz = total_peaks / duration_seconds
     return frequency_hz
 
-# Access and process the .h5 data
-with h5py.File(h5_path, 'r') as file:
-    data = file['df_with_missing/table']['values_block_0'][syn_frame_start:syn_frame_end, :]
-    y_values_combined = np.vstack((data[:, 1], data[:, 4], data[:, 7], data[:, 10])).T
+# Access tracking data; stack y-values and normalise
+data = tracking_filtered[syn_frame_start:syn_frame_end, :]
+y_values_combined = np.vstack((data[:, 1], data[:, 3], data[:, 5], data[:, 7])).T
 
-normalized_y_values = y_values_combined - y_values_combined[0, :]
-positive_y_values = np.abs(normalized_y_values)
+normalised_y_values = y_values_combined - y_values_combined[0, :]
+positive_y_values = np.abs(normalised_y_values)
 
 area_under_curve = [simps(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
 total_area = sum(area_under_curve)
 
+# Create variables for the detection of each keypress, onset, and offset; plot
 total_peaks_across_channels = 0
 keypress_counts = [0] * 4
-y_threshold = 460 # keypresses cannot be detected beneath this value
+y_threshold = 330 # keypresses cannot be detected beneath this value
 onset_offset_data = {channel: [] for channel in channels}
 fig, ax = plt.subplots(figsize=(14, 6))
 x_range = np.arange(syn_frame_start, syn_frame_start + len(y_values_combined))
 
 for i, channel_name in enumerate(channels):
     derivative = np.diff(y_values_combined[:, i], prepend=y_values_combined[0, i])
-    peaks, _ = find_peaks(y_values_combined[:, i], prominence=20)
+    peaks, _ = find_peaks(y_values_combined[:, i], prominence=17)
     valid_peaks = [peak for peak in peaks if y_values_combined[peak, i] > y_threshold]  # Filter peaks based on threshold
 
     keypress_counts[i] = len(valid_peaks)
@@ -373,17 +379,17 @@ for i, channel_name in enumerate(channels):
         ax.plot(offset + syn_frame_start, y_values_combined[offset, i], 'mo')
         onset_offset_data[channel_name].append((onset + syn_frame_start, offset + syn_frame_start))
         
-# Calculate normalized frequency in Hz
-normalized_frequency_hz = normalize_peaks_to_hz(total_peaks_across_channels, syn_frame_end - syn_frame_start + 1)
+# Calculate normalised frequency in Hz
+normalised_frequency_hz = normalize_peaks_to_hz(total_peaks_across_channels, syn_frame_end - syn_frame_start + 1)
 
 ax.set_title('Time Series of Channels with Detected Keypresses')
 ax.set_xlabel('Frame Index')
 ax.set_ylabel('Y Position')
-ax.text(0.125, 0.1, s=f"Normalized Frequency: {normalized_frequency_hz: .3f} Hz", transform=ax.transAxes, ha='center', va='center', color='red')
+ax.text(0.125, 0.1, s=f"Normalised Frequency: {normalised_frequency_hz: .3f} Hz", transform=ax.transAxes, ha='center', va='center', color='red')
 ax.legend()
 plt.show()
 
-# Plot normalized and non-negative curves
+# Plot normal and non-negative curves
 fig2, ax2 = plt.subplots(figsize=(14, 6))
 for i, channel_name in enumerate(channels):
     ax2.plot(x_range, positive_y_values[:, i], label=channel_name, color=colors[i])
@@ -399,12 +405,19 @@ df_areas = pd.DataFrame({
     'Area Under Curve': area_under_curve
 })
 
-# Plot the areas beneath each channel
-plt.figure(figsize=(10, 6))
-sns.barplot(x='Channel', y='Area Under Curve', data=df_areas, palette='viridis')
-plt.title('Area Contribution of Each Channel')
-plt.xlabel('Channel')
-plt.ylabel('Area')
+# Plot the integrals for each channel
+plt.figure(figsize=(6, 4))
+area_palette = sns.color_palette("Reds", len(channels))
+bottom_val = 0
+handles = []
+for i, (channel, area) in enumerate(zip(channels, area_under_curve)):
+    bar = plt.bar('Total Area', area, bottom=bottom_val, color=area_palette[i], label=channel)
+    handles.append(bar[0])  # Store the handle of the bar
+    bottom_val += area
+
+plt.title('Stacked Area Contribution of Each Channel')
+plt.ylabel('Area Under Curve')
+plt.legend(handles[::-1], channels[::-1]) # Invert legend handles for clarity
 plt.show()
 
 #%%
@@ -414,57 +427,37 @@ plt.show()
 # channel; calculate and plot overlap of movements over all channels
 ###
 
-positive_velocities = []
-negative_velocities = []
-std_devs_pos_velocity = []
-std_devs_neg_velocity = []
+# Initialize empty lists to store values
+average_velocities = []
+std_devs_velocity = []
 
-positive_accelerations = []
-negative_accelerations = []
-std_devs_pos_acceleration = []
-std_devs_neg_acceleration = []
+average_accelerations = []
+std_devs_acceleration = []
 
-# Initialize an empty list to store all keypress events
 all_keypress_events = []
 
 # Collect keypress events for each channel, applying the threshold
 for i, channel in enumerate(channels):
-    peaks, _ = find_peaks(y_values_combined[:, i], prominence=20)
-    # Filter peaks based on the y-value threshold
+    peaks, _ = find_peaks(y_values_combined[:, i], prominence=17)
     valid_peaks = [peak for peak in peaks if y_values_combined[peak, i] > y_threshold]
     for peak in valid_peaks:
         onset, offset = find_onset_offset(np.diff(y_values_combined[:, i], prepend=y_values_combined[0, i]), peak)
-        # Store events with their adjusted frame number
         all_keypress_events.append((onset + syn_frame_start, 'onset', channel, peak))
         all_keypress_events.append((peak + syn_frame_start, 'peak', channel, peak))
         all_keypress_events.append((offset + syn_frame_start, 'offset', channel, peak))
 
-# Sort the events list by peak_frame primarily, and then by frame to maintain the sequence
 all_keypress_events_sorted = sorted(all_keypress_events, key=lambda x: (x[3], x[0]))
 
-# Calculating velocities and accelerations
+# Calculate magnitude of velocities and accelerations
 for i in range(y_values_combined.shape[1]):
-    velocities = np.diff(y_values_combined[:, i])
-    accelerations = np.diff(velocities)
+    velocities = np.abs(np.diff(y_values_combined[:, i]))
+    accelerations = np.abs(np.diff(velocities))
     
-    # Separate positive and negative velocities
-    pos_velocities = velocities[velocities > 0]
-    neg_velocities = velocities[velocities < 0]
+    average_velocities.append(np.mean(velocities))
+    std_devs_velocity.append(np.std(velocities))
     
-    # Separate positive and negative accelerations
-    pos_accelerations = accelerations[accelerations > 0]
-    neg_accelerations = accelerations[accelerations < 0]
-    
-    # Calculate averages and standard deviations
-    positive_velocities.append(np.mean(pos_velocities))
-    negative_velocities.append(np.mean(neg_velocities))
-    std_devs_pos_velocity.append(np.std(pos_velocities))
-    std_devs_neg_velocity.append(np.std(neg_velocities))
-    
-    positive_accelerations.append(np.mean(pos_accelerations))
-    negative_accelerations.append(np.mean(neg_accelerations))
-    std_devs_pos_acceleration.append(np.std(pos_accelerations))
-    std_devs_neg_acceleration.append(np.std(neg_accelerations))
+    average_accelerations.append(np.mean(accelerations))
+    std_devs_acceleration.append(np.std(accelerations))
     
 # Calculate overlap sequentially for each offset[i] -> onset[i+1] pair
 total_overlap_frames = 0
@@ -481,41 +474,35 @@ for i in range(len(all_keypress_events_sorted) - 1):
 percent_overlap = total_overlap_frames / len(y_values_combined) * 100
 
 # Velocity plot data
-df_velocities = pd.DataFrame({
-    'Channel': channels * 2,
-    'Velocity Type': ['Positive Velocity'] * len(channels) + ['Negative Velocity'] * len(channels),
-    'Average Velocity': positive_velocities + negative_velocities,
-    'STD': std_devs_pos_velocity + std_devs_neg_velocity
+df_velocity = pd.DataFrame({
+    'Channel': channels,
+    'Average Velocity': average_velocities,
+    'STD Velocity': std_devs_velocity
 })
 
 # Acceleration plot data
-df_accelerations = pd.DataFrame({
-    'Channel': channels * 2,
-    'Acceleration Type': ['Positive Acceleration'] * len(channels) + ['Negative Acceleration'] * len(channels),
-    'Average Acceleration': positive_accelerations + negative_accelerations,
-    'STD': std_devs_pos_acceleration + std_devs_neg_acceleration
+df_acceleration = pd.DataFrame({
+    'Channel': channels,
+    'Average Acceleration': average_accelerations,
+    'STD Acceleration': std_devs_acceleration
 })
 
-# Plotting velocities
+# Plot velocities
 plt.figure(figsize=(12, 6))
-ax = sns.barplot(x='Channel', y='Average Velocity', hue='Velocity Type', data=df_velocities, palette='Blues', dodge=True)
-for i, channel in enumerate(channels):
-    ax.errorbar(i - 0.2, positive_velocities[i], yerr=std_devs_pos_velocity[i], fmt='none', color='darkblue', capsize=3)
-    ax.errorbar(i + 0.2, negative_velocities[i], yerr=std_devs_neg_velocity[i], fmt='none', color='darkblue', capsize=3)
-plt.title('Average Velocities for Each Channel')
-plt.ylabel('Velocity')
-plt.legend()
+sns.barplot(x='Channel', y='Average Velocity', data=df_velocity, palette='Blues')
+plt.errorbar(x=np.arange(len(channels)), y=df_velocity['Average Velocity'], yerr=df_velocity['STD Velocity'], fmt='none', c='darkblue', capsize=5)
+plt.title('Average Velocities for Each Digit')
+plt.ylabel('Velocity (pixels/s)')
+plt.xlabel('Channel')
 plt.show()
 
-# Plotting accelerations
+# Plot accelerations
 plt.figure(figsize=(12, 6))
-ax = sns.barplot(x='Channel', y='Average Acceleration', hue='Acceleration Type', data=df_accelerations, palette='Greens', dodge=True)
-for i, channel in enumerate(channels):
-    ax.errorbar(i - 0.2, positive_accelerations[i], yerr=std_devs_pos_acceleration[i], fmt='none', color='darkgreen', capsize=3)
-    ax.errorbar(i + 0.2, negative_accelerations[i], yerr=std_devs_neg_acceleration[i], fmt='none', color='darkgreen', capsize=3)
-plt.title('Average Accelerations for Each Channel')
+sns.barplot(x='Channel', y='Average Acceleration', data=df_acceleration, palette='Greens')
+plt.errorbar(x=np.arange(len(channels)), y=df_acceleration['Average Acceleration'], yerr=df_acceleration['STD Acceleration'], fmt='none', c='darkgreen', capsize=5)
+plt.title('Average Accelerations for Each Digit')
 plt.ylabel('Acceleration')
-plt.legend()
+plt.xlabel('Channel')
 plt.show()
 
 # Plot percent of frames detected as overlap
@@ -532,3 +519,5 @@ print(f"Total percent overlap among channels: {percent_overlap:.2f}%")
 
 # TODO Convert CKPS calculations from Matlab to Python and add
 # TODO Convert micro-online and micro-offline code from Matlab to Python and add
+# TODO Synergies emerging late and early - evolution
+# TODO Occurrences/consistency of synergies for each 012, 027, 049
