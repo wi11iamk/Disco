@@ -21,7 +21,7 @@ from hubdt import data_loading, behav_session_params, wavelets, t_sne, hdb_clust
 
 from scipy.stats import gaussian_kde, ks_2samp, sem, t
 
-from scipy.integrate import simps
+from scipy.integrate import simpson
 
 from scipy.signal import find_peaks, savgol_filter
 
@@ -230,7 +230,7 @@ def calculate_label_data(arr, threshold=0):
                 minus_one_counter = 0  # Reset the -1 counter
             else:
                 if current_val is not None:
-                    finalize_count(continuous_counts, current_val, count, start_frame)
+                    finalise_count(continuous_counts, current_val, count, start_frame)
                 current_val = val
                 count = 1
                 start_frame = idx
@@ -239,14 +239,14 @@ def calculate_label_data(arr, threshold=0):
                 minus_one_counter += 1  # Tolerate -1 within the threshold
             else:
                 if current_val is not None:
-                    finalize_count(continuous_counts, current_val, count, start_frame)
+                    finalise_count(continuous_counts, current_val, count, start_frame)
                     current_val = None
                     count = 0
                 minus_one_counter = 0  # Reset -1 counter
     
     # Finalize the last sequence
     if current_val is not None and count > 0:
-        finalize_count(continuous_counts, current_val, count, start_frame)
+        finalise_count(continuous_counts, current_val, count, start_frame)
     
     process_counts(continuous_counts)
     
@@ -256,7 +256,7 @@ def calculate_label_data(arr, threshold=0):
     return sorted_results
 
 # Function to update or initialise label data in 'continuous_counts'
-def finalize_count(continuous_counts, val, count, start_frame):
+def finalise_count(continuous_counts, val, count, start_frame):
     if val not in continuous_counts:
         continuous_counts[val] = {'counts': [], 'start_frames': []}
     continuous_counts[val]['counts'].append(count)
@@ -388,13 +388,10 @@ def plot_time_series(ax, x_range, y_values, channels, colors, y_threshold):
             ax.plot(x_range[onset], y_values[onset, i], 'go')
             ax.plot(x_range[offset], y_values[offset, i], 'mo')
             onset_offset_data[channel_name].append((onset, offset))
-    area_under_curve = [simps(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
+    area_under_curve = [simpson(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
     return total_peaks_across_channels, onset_offset_data, area_under_curve
 
-# Use the full dataset for DTW comparison
-full_dataset_y_values = process_y_values_full(tracking_filtered)
-
-# Direct implementation of DTW in Python
+# Direct implementation of DTW
 def dtw_basic(s, t):
     n, m = len(s), len(t)
     dtw_matrix = np.zeros((n+1, m+1))
@@ -408,33 +405,50 @@ def dtw_basic(s, t):
                                           dtw_matrix[i-1, j-1])  # match
     return dtw_matrix[n, m]
 
-# Updated function to find similarities using the direct DTW implementation
-def find_synergies_dtw(target_segment, full_dataset, num_segments=4, dist_threshold=10):
+# Function to identify additional occurrences of the synergy of interest
+def find_synergies_dtw(y_values_combined, full_dataset_y, syn_frame_start, syn_frame_end, num_segments=4, dist_threshold=None):
     dtw_distances = []
-    num_channels = target_segment.shape[1]
+    num_channels = y_values_combined.shape[1]
+    target_length = len(y_values_combined)
     
-    for i in range(len(full_dataset) - len(target_segment) + 1):
+    # Initialise with the target segment range to avoid selecting within this range
+    selected_ranges = [(syn_frame_start, syn_frame_end)]
+
+    for i in range(len(full_dataset_y) - target_length + 1):
+        # Skip if the segment falls within the target range or overlaps with selected ranges
+        if any(start <= i <= end or start <= i + target_length - 1 <= end for start, end in selected_ranges):
+            continue
+
         total_distance = 0
-        comparison_segment = full_dataset[i:i + len(target_segment)]
-        
+        comparison_segment = full_dataset_y[i:i + target_length]
+
         for channel in range(num_channels):
-            target_channel_data = target_segment[:, channel]
+            target_channel_data = y_values_combined[:, channel]
             comparison_channel_data = comparison_segment[:, channel]
-            
             distance = dtw_basic(target_channel_data, comparison_channel_data)
             total_distance += distance
-        
+
         avg_distance = total_distance / num_channels
         
-        if avg_distance < dist_threshold or dist_threshold is None:
-            dtw_distances.append((i, avg_distance))
+        # Append the segment start index, its average DTW distance, and its end index
+        if avg_distance < dist_threshold:
+            dtw_distances.append((i, avg_distance, i + target_length - 1))
     
-    # Exclude the first match, sort by distance, and then select top segments
-    dtw_distances = sorted(dtw_distances, key=lambda x: x[1])[1:num_segments+1]
-    similar_segment_indices = [idx for idx, _ in dtw_distances]
+    # Sort distances, excluding the closest match if it's the segment itself
+    dtw_distances = sorted(dtw_distances, key=lambda x: x[1])[1:]
+
+    similar_segment_indices = []
+    for idx, _, end_idx in dtw_distances:
+        # Select non-overlapping segments up to num_segments
+        if not any(start <= idx <= end or start <= end_idx <= end for start, end in selected_ranges):
+            similar_segment_indices.append(idx)
+            selected_ranges.append((idx, end_idx))
+            if len(similar_segment_indices) >= num_segments:
+                break
     
     return similar_segment_indices
 
+# Function to calculate the mean of identified occurrences with CI
 def plot_with_confidence_intervals(ax, data, colors, channel_names):
     
     for i, channel in enumerate(channel_names):
@@ -445,13 +459,14 @@ def plot_with_confidence_intervals(ax, data, colors, channel_names):
     ax.legend()
     ax.set_title("Mean of Time Series with Confidence Intervals")
 
-def series_analysis_dtw(tracking_filtered, y_values_combined, syn_frame_start, syn_frame_end, similar_segment_indices, channels, colors, dist_threshold=None):
-    fig, axs = plt.subplots(6, 1, figsize=(14, 18), sharex=True)
+# Function to plot the synergy of interest, identified occurrences and mean
+def series_analysis_dtw(full_dataset_y, y_values_combined, syn_frame_start, syn_frame_end, similar_segment_indices, channels, colors, dist_threshold=None):
+    fig, axs = plt.subplots(6, 1, figsize=(14, 36), sharex=True)
     
     # Plot the target time series
     for i, channel_name in enumerate(channels):
         axs[0].plot(y_values_combined[:, i], label=channel_name, color=colors[i])
-    axs[0].set_title("Target Time Series")
+    axs[0].set_title("Synergy occurrence 1")
     axs[0].legend()
 
     # Data container for calculating mean and confidence interval
@@ -462,12 +477,12 @@ def series_analysis_dtw(tracking_filtered, y_values_combined, syn_frame_start, s
     for idx, segment_idx in enumerate(similar_segment_indices):
         start = segment_idx
         end = start + len(y_values_combined)
-        similar_segment = tracking_filtered[start:end, :]
+        similar_segment = full_dataset_y[start:end, :]
         all_data[idx+1, :, :] = similar_segment
 
         for i, channel_name in enumerate(channels):
             axs[idx+1].plot(similar_segment[:, i], label=channel_name, color=colors[i])
-        axs[idx+1].set_title(f"Similar Time Series {idx+1}")
+        axs[idx+1].set_title(f"Synergy occurrence {idx+2}")
 
     # Plot the mean of the target and similar time series with confidence intervals
     plot_with_confidence_intervals(axs[-1], all_data, colors, channels)
@@ -480,8 +495,10 @@ data = tracking_filtered[syn_frame_start:syn_frame_end, :]
 y_values_combined, normalised_y_values, positive_y_values = process_y_values(data)
 x_range = np.arange(syn_frame_start, syn_frame_end)
 
-similar_segment_indices = find_synergies_dtw(y_values_combined, tracking_filtered, num_segments=4, dist_threshold=10)
-series_analysis_dtw(tracking_filtered, y_values_combined, syn_frame_start, syn_frame_end, similar_segment_indices, channels, colors, dist_threshold=10)
+# Use the full dataset for DTW calculations
+full_dataset_y = process_y_values_full(tracking_filtered)
+similar_segment_indices = find_synergies_dtw(y_values_combined, full_dataset_y, syn_frame_start, syn_frame_end, num_segments=4, dist_threshold=200)
+series_analysis_dtw(full_dataset_y, y_values_combined, syn_frame_start, syn_frame_end, similar_segment_indices, channels, colors, dist_threshold=200)
 
 fig, ax = plt.subplots(figsize=(14, 6))
 total_peaks_across_channels, onset_offset_data, area_under_curve = plot_time_series(ax, x_range, y_values_combined, channels, colors, y_threshold)
@@ -490,7 +507,7 @@ normalised_frequency_hz = normalise_peaks_to_hz(total_peaks_across_channels, syn
 ax.set_title('Time Series of Channels with Detected Keypresses')
 ax.set_xlabel('Frame Index')
 ax.set_ylabel('Y Position')
-ax.text(0.125, 0.9, f"Normalized Frequency: {normalised_frequency_hz:.3f} Hz", transform=ax.transAxes, color='red')
+ax.text(0.125, 0.9, f"Normalised Frequency: {normalised_frequency_hz:.3f} Hz", transform=ax.transAxes, color='red')
 ax.legend()
 
 plt.show()
@@ -499,7 +516,7 @@ plt.show()
 fig2, ax2 = plt.subplots(figsize=(14, 6))
 for i, channel_name in enumerate(channels):
     ax2.plot(x_range, positive_y_values[:, i], label=channel_name, color=colors[i])
-ax2.set_title('Normalized and Non-negative Curves')
+ax2.set_title('Normalised and Non-negative Curves')
 ax2.set_xlabel('Frame Index')
 ax2.set_ylabel('Adjusted Y Position')
 ax2.legend()
@@ -532,7 +549,7 @@ plt.show()
 # channel; calculate and plot overlap of movements over all channels
 ###
 
-# Initialize empty lists to store values
+# Initialise empty lists to store values
 average_velocities = []
 std_devs_velocity = []
 
@@ -645,7 +662,7 @@ for idx, (trial_number, (trial_start, trial_end)) in enumerate(trial.items(), st
     normalised_y_values = y_values_combined - y_values_combined[0, :]
     positive_y_values = np.abs(normalised_y_values)
 
-    area_under_curve = [simps(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
+    area_under_curve = [simpson(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
     total_area = sum(area_under_curve)
     bottom_val = 0  
 
@@ -665,7 +682,7 @@ ax.set_xticklabels(trial_keys)
 
 # Plotting the normalised frequency as a line plot on a secondary y-axis
 ax2 = ax.twinx()
-ax2.plot(x_positions, normalised_freq_per_trial, color='slategrey', marker='o', label='Normalized Frequency (Hz)')
+ax2.plot(x_positions, normalised_freq_per_trial, color='slategrey', marker='o', label='Normalised Frequency (Hz)')
 ax2.set_ylabel('Normalised Frequency (Hz)', color='slategrey')
 ax2.tick_params(axis='y', labelcolor='slategrey')
 
@@ -678,7 +695,7 @@ ax.set_xlabel('Trial', fontsize=14)
 ax.set_ylabel('Total Area Under Curve', fontsize=14)
 plt.title('Total Activity per Trial with Normalised Frequency', fontsize=16)
 
-# Adding legend for the channels, and possibly for the normalized frequency if desired
+# Adding legend for the channels, and possibly for the normalised frequency if desired
 legend_elements = [Patch(facecolor=colors[i], edgecolor='white', label=channels[i]) for i in range(len(channels))] + [Line2D([0], [0], color='slategrey', marker='o', label='Normalised Hz')]
 ax.legend(handles=legend_elements[::-1], loc='upper left')
 
@@ -689,5 +706,3 @@ plt.show()
 
 # TODO Convert CKPS calculations from Matlab to Python and add
 # TODO Convert micro-online and micro-offline code from Matlab to Python and add
-# TODO Synergies emerging late and early - evolution
-# TODO Occurrences/consistency of synergies for each 012, 027, 049
