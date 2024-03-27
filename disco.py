@@ -11,20 +11,14 @@ Created on Wed Feb 28 19:55:56 2024
 # Import necessary libraries
 ###
 
-import numpy as np, pandas as pd, umap, matplotlib.pyplot as plt, seaborn as sns
-
+import numpy as np, pandas as pd, umap 
+import matplotlib.pyplot as plt, seaborn as sns
 from matplotlib.patches import Patch
-
 from matplotlib.lines import Line2D
-
 from hubdt import data_loading, behav_session_params, wavelets, t_sne, hdb_clustering, b_utils
-
 from scipy.stats import gaussian_kde, ks_2samp, sem, t
-
 from scipy.integrate import simpson
-
 from scipy.signal import find_peaks, savgol_filter
-
 from scipy.spatial.distance import jensenshannon
 
 #%%
@@ -45,19 +39,20 @@ tracking = data_loading.load_tracking (mysesh, dlc=True, feats=features)
 
 # Create variables for and apply Savitzky-Golay filter
 tracking_filtered = tracking.copy() # Create copy of tracking to filter
-window_length = 20  # Choose an odd number for the window size
-polyorder = 2  # Polynomial order
+window_length = 10  # Choose an odd number for the window size
+polyorder = 1  # Polynomial order
 for col in range(1, 8, 2):  # Iterate over y-value columns (1, 3, 5, 7)
     tracking_filtered[:, col] = savgol_filter(tracking[:, col], window_length, polyorder)
     
 # Dictoionary to store y_threshold values specific to each participant
 y_threshold_values = {
-    '027': 460,
+    '027': 350,
     '012': 330,
+    '049': 400,
     # Add more participants as needed
 }
 
-participant_number = '012' # Enter participant number from HUB-DT session here
+participant_number = '027' # Enter participant number from HUB-DT session here
 y_threshold = y_threshold_values.get(participant_number)
 
 #%%
@@ -269,11 +264,11 @@ def process_counts(continuous_counts):
         counts = data['counts']
         start_frames = data['start_frames']
         mean_count = np.mean(counts)
-        first_five = start_frames[:5]
+        first_one = start_frames[:1]
 
         data['stats'] = (
             mean_count,  # Mean length in frames
-            *first_five,  # The first frames of the first five occurrences
+            *first_one,  # The first frame of the first occurrence
             len(counts),  # Total number of occurrences
             (sum(counts) / total_all_frames) * 100  # % of total frames
         )
@@ -327,10 +322,10 @@ plt.show()
 # timeseries calculations are based on this range
 ###
 
-syn_frame_start = 16685
-syn_frame_end = 16685+60
+syn_frame_start = 19527
+syn_frame_end = 19527+81
 
-fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 10, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 9, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
 
 #fig4 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, compare_to=True, comp_label=8)
 
@@ -341,7 +336,9 @@ fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_
 ###
 # FOR SYNERGIES: Calculate and plot the time series of each channel, the frame 
 # of each keypress, the onset and offset of each keypress; calculate and plot 
-# each channel to a normalised frame; calculate integrals of each channel
+# each channel to a normalised frame; calculate integrals of each channel;
+# calculate and plot additional occurrences of the synergy of interest and the
+# means of the identified channels with a CI of 95%
 ###
 
 channels = ['Little', 'Ring', 'Middle', 'Index']
@@ -373,22 +370,34 @@ def process_y_values_full(data):
     return y_values_combined_full
 
 # Function to plot time series and detect key events
-def plot_time_series(ax, x_range, y_values, channels, colors, y_threshold):
+def detect_and_plot_time_series(ax, x_range, y_values_combined, channels, colors, y_threshold, plot=True):
     total_peaks_across_channels = 0
     onset_offset_data = {channel: [] for channel in channels}
+    area_under_curve = []
+
     for i, channel_name in enumerate(channels):
-        derivative = np.diff(y_values[:, i], prepend=y_values[0, i])
-        peaks, _ = find_peaks(y_values[:, i], height=y_threshold)
-        valid_peaks = peaks  # Assuming height filter is sufficient
-        total_peaks_across_channels += len(valid_peaks)
-        ax.plot(x_range, y_values[:, i], label=channel_name, color=colors[i])
-        for peak in valid_peaks:
-            ax.plot(x_range[peak], y_values[peak, i], 'r*')
+        derivative = np.diff(y_values_combined[:, i], prepend=y_values_combined[0, i])
+        peaks, _ = find_peaks(y_values_combined[:, i], height=y_threshold)
+        total_peaks_across_channels += len(peaks)
+        if plot:
+            ax.plot(x_range, y_values_combined[:, i], label=channel_name, color=colors[i])
+            for peak in peaks:
+                ax.plot(x_range[peak], y_values_combined[peak, i], 'r*')
+        for peak_idx, peak in enumerate(peaks):
             onset, offset = find_onset_offset(derivative, peak)
-            ax.plot(x_range[onset], y_values[onset, i], 'go')
-            ax.plot(x_range[offset], y_values[offset, i], 'mo')
-            onset_offset_data[channel_name].append((onset, offset))
-    area_under_curve = [simpson(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
+            # Store onset, offset with corresponding peak index for each channel
+            onset_offset_data[channel_name].append((onset, 'onset', channel_name, peak_idx))
+            onset_offset_data[channel_name].append((offset, 'offset', channel_name, peak_idx))
+            if plot:
+                ax.plot(x_range[onset], y_values_combined[onset, i], 'go')
+                ax.plot(x_range[offset], y_values_combined[offset, i], 'mo')
+
+        # Calculate area under curve using simpson's rule for each channel and append to list
+        area_under_curve = [simpson(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
+
+    if plot:
+        ax.legend()
+
     return total_peaks_across_channels, onset_offset_data, area_under_curve
 
 # Direct implementation of DTW
@@ -490,18 +499,13 @@ def series_analysis_dtw(full_dataset_y, y_values_combined, syn_frame_start, syn_
     plt.tight_layout()
     plt.show()
 
-# Process and plot
+# Process and plot time series for synergy of interest
 data = tracking_filtered[syn_frame_start:syn_frame_end, :]
 y_values_combined, normalised_y_values, positive_y_values = process_y_values(data)
 x_range = np.arange(syn_frame_start, syn_frame_end)
 
-# Use the full dataset for DTW calculations
-full_dataset_y = process_y_values_full(tracking_filtered)
-similar_segment_indices = find_synergies_dtw(y_values_combined, full_dataset_y, syn_frame_start, syn_frame_end, num_segments=4, dist_threshold=200)
-series_analysis_dtw(full_dataset_y, y_values_combined, syn_frame_start, syn_frame_end, similar_segment_indices, channels, colors, dist_threshold=200)
-
 fig, ax = plt.subplots(figsize=(14, 6))
-total_peaks_across_channels, onset_offset_data, area_under_curve = plot_time_series(ax, x_range, y_values_combined, channels, colors, y_threshold)
+total_peaks_across_channels, onset_offset_data, area_under_curve = detect_and_plot_time_series(ax, x_range, y_values_combined, channels, colors, y_threshold)
 normalised_frequency_hz = normalise_peaks_to_hz(total_peaks_across_channels, syn_frame_end - syn_frame_start + 1)
 
 ax.set_title('Time Series of Channels with Detected Keypresses')
@@ -544,6 +548,17 @@ plt.show()
 
 #%%
 
+# Process and plot time series for additional occurrences
+full_dataset_y = process_y_values_full(tracking_filtered)
+
+similar_segment_indices = find_synergies_dtw(y_values_combined, full_dataset_y,
+            syn_frame_start, syn_frame_end, num_segments=4, dist_threshold=400)
+
+series_analysis_dtw(full_dataset_y, y_values_combined, syn_frame_start,
+            syn_frame_end, similar_segment_indices, channels, colors, dist_threshold=400)
+
+#%%
+
 ###
 # FOR SYNERGIES: Calculate and plot average velocity and acceleration for each
 # channel; calculate and plot overlap of movements over all channels
@@ -556,22 +571,39 @@ std_devs_velocity = []
 average_accelerations = []
 std_devs_acceleration = []
 
-all_keypress_events = []
-
 data = tracking_filtered[syn_frame_start:syn_frame_end, :] # Set data range
 y_values_combined, normalised_y_values, positive_y_values = process_y_values(data)
 
-# Collect keypress events for each channel, applying the threshold
-for i, channel in enumerate(channels):
-    peaks, _ = find_peaks(y_values_combined[:, i], prominence=17)
-    valid_peaks = [peak for peak in peaks if y_values_combined[peak, i] > y_threshold]
-    for peak in valid_peaks:
-        onset, offset = find_onset_offset(np.diff(y_values_combined[:, i], prepend=y_values_combined[0, i]), peak)
-        all_keypress_events.append((onset + syn_frame_start, 'onset', channel, peak))
-        all_keypress_events.append((peak + syn_frame_start, 'peak', channel, peak))
-        all_keypress_events.append((offset + syn_frame_start, 'offset', channel, peak))
+def calculate_overlaps(onset_offset_data):
+    total_overlap_frames = 0
 
-all_keypress_events_sorted = sorted(all_keypress_events, key=lambda x: (x[3], x[0]))
+    # Convert onset_offset_data to a flat list of (time, type, channel, peak_index) tuples
+    all_events = []
+    for channel, events in onset_offset_data.items():
+        all_events.extend(events)
+    
+    # Sort all events by peak index, then by time to maintain the sequence of events as they occurred
+    all_events_sorted = sorted(all_events, key=lambda x: (x[2], x[0]))
+
+    # Iterate through sorted events to find overlaps between offsets and subsequent onsets across channels
+    for i in range(len(all_events_sorted) - 1):
+        current_event = all_events_sorted[i]
+        next_event = all_events_sorted[i + 1]
+        
+        # Ensure we are comparing an offset to a subsequent onset and they are from different channels
+        if current_event[1] == 'offset' and next_event[1] == 'onset':
+            # Calculate potential overlap
+            overlap = current_event[0] - next_event[0]
+            
+            # If the calculated value is negative, it indicates an overlap
+            if overlap > 0:
+                total_overlap_frames += overlap
+
+    return total_overlap_frames, all_events_sorted
+
+total_peaks, onset_offset_data, area_under_curve = detect_and_plot_time_series(ax, x_range, y_values_combined, channels, colors, y_threshold, plot=False)  # plot=True if you want to visualize
+total_overlap_frames, all_events_sorted = calculate_overlaps(onset_offset_data)
+percent_overlap = total_overlap_frames / len(y_values_combined) * 100  # Ensure y_values_combined is defined and accurate
 
 # Calculate magnitude of velocities and accelerations
 for i in range(y_values_combined.shape[1]):
@@ -583,20 +615,6 @@ for i in range(y_values_combined.shape[1]):
     
     average_accelerations.append(np.mean(accelerations))
     std_devs_acceleration.append(np.std(accelerations))
-    
-# Calculate overlap sequentially for each offset[i] -> onset[i+1] pair
-total_overlap_frames = 0
-for i in range(len(all_keypress_events_sorted) - 1):
-    current_event = all_keypress_events_sorted[i]
-    next_event = all_keypress_events_sorted[i + 1]
-
-    if current_event[1] == 'offset' and next_event[1] == 'onset':
-        overlap = current_event[0] - next_event[0]
-        if overlap > 0:
-            total_overlap_frames += overlap
-
-# Calculate percent overlap
-percent_overlap = total_overlap_frames / len(y_values_combined) * 100
 
 # Velocity plot data
 df_velocity = pd.DataFrame({
@@ -706,3 +724,4 @@ plt.show()
 
 # TODO Convert CKPS calculations from Matlab to Python and add
 # TODO Convert micro-online and micro-offline code from Matlab to Python and add
+# TODO Evolution, then consistency, then population
