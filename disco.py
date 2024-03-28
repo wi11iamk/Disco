@@ -20,13 +20,15 @@ from scipy.stats import gaussian_kde, ks_2samp, sem, t
 from scipy.integrate import simpson
 from scipy.signal import find_peaks, savgol_filter
 from scipy.spatial.distance import jensenshannon
+from fastdtw import fastdtw
 
 #%%
 
 ###
 # Initialise the HUB-DT session; import all DLC features and tracking data;
 # apply Savitzky-Golay filter to each y time series; initialise dictionary to
-# store specific y_threshold values for peak detection for each participant 
+# store specific y_threshold values for peak detection for each participant;
+# initialise dictionary to store frame lengths of each trial 
 ###
 
 mysesh = behav_session_params.load_session_params ('Mine')
@@ -55,6 +57,18 @@ y_threshold_values = {
 participant_number = '027' # Enter participant number from HUB-DT session here
 y_threshold = y_threshold_values.get(participant_number)
 
+# Initialise a dictionary to store frame lengths for each trial
+trial = {}
+
+# Total number of trials
+total_trials = 36
+
+# Populate the dictionary with slices
+for i in range(total_trials):
+    key = f"{i+1}"  # Key name (e.g., '1' for trial 1)
+    value = (i*1200, (i+1)*1200-1)  # Range for each slice
+    trial[key] = value
+
 #%%
 
 ###
@@ -74,7 +88,7 @@ proj = np.transpose(proj)
 # Fit wavelet projection into two dimensional embedded space (UMAP); plot
 ###
 
-mapper = umap.UMAP(n_neighbors=30, n_components=2, min_dist=0.1).fit(proj)
+mapper = umap.UMAP(n_neighbors=30, n_components=2, min_dist=0.2).fit(proj)
 
 embed = mapper.embedding_
 
@@ -104,18 +118,6 @@ def normalise_grid(grid):
 # Calculate a density grid for the entire dataset
 entire_data_density, x_grid, y_grid = t_sne.calc_density(embed)
 grid_coords = np.vstack([x_grid.ravel(), y_grid.ravel()])
-
-# Initialise a dictionary to store frame lengths for each trial
-trial = {}
-
-# Total number of trials
-total_trials = 36
-
-# Populate the dictionary with slices
-for i in range(total_trials):
-    key = f"{i+1}"  # Key name (e.g., '1' for trial 1)
-    value = (i*1200, (i+1)*1200-1)  # Range for each slice
-    trial[key] = value
 
 # Define slices (you may use an empty tuple for the entire dataset)
 slices = [trial['1'],trial['5'],trial['12'],trial['35']]
@@ -186,7 +188,7 @@ for i in range(len(slice_data_segments) - 1):
 # data; plot cluster distance tree; plot cluster labels atop embedded data
 ###
 
-clusterobj = hdb_clustering.hdb_scan(embed, 500, 50, selection='leaf', cluster_selection_epsilon=0.15)
+clusterobj = hdb_clustering.hdb_scan(embed, 500, 50, selection='leaf', cluster_selection_epsilon=0.20)
 
 labels = clusterobj.labels_
 
@@ -273,45 +275,56 @@ def process_counts(continuous_counts):
             (sum(counts) / total_all_frames) * 100  # % of total frames
         )
 
-a_labels_data = calculate_label_data(a_labels, threshold=15)
+a_labels_data = calculate_label_data(a_labels, threshold=5)
 
 #%%
 
 ###
-# Calculate the distribution of labels within specified slices=[]
+# Calculate the distribution of labels within each trial
 ###
 
-# Count the occurrences of each non-negative integer within each slice
-slice_counts = []
-for sl in slices:
-    slice_a_labels = a_labels[sl[0]:sl[1]]
-    unique, counts = np.unique(slice_a_labels, return_counts=True)
-    slice_counts.append(dict(zip(unique, counts)))
+# Initialise the normalised count storage
+normalised_trial_counts = []
 
-# Assuming the x axis should span all unique non-negative ints found across all slices
-all_ints = set().union(*[list(counts.keys()) for counts in slice_counts])
-max_int = max(all_ints)
-x_values = np.arange(max_int + 1)  # +1 because np.arange is exclusive at the end
+for trial_name, slice_range in trial.items():
+    slice_labels = a_labels[slice_range[0]:slice_range[1]+1]
+    non_negative_labels = slice_labels[slice_labels >= 0]
+    unique, counts = np.unique(non_negative_labels, return_counts=True)
+    
+    # Normalize counts to make the sum equal to 1
+    normalized_counts = counts / counts.sum()
+    # Create a dict for this trial's normalized counts
+    trial_count = dict(zip(unique, normalized_counts))
+    normalised_trial_counts.append(trial_count)
 
-# Prepare data for plotting
-plot_data = np.zeros((len(slices), max_int + 1))
-for i, counts in enumerate(slice_counts):
-    for int_value, count in counts.items():
-        plot_data[i, int_value] = count
+# To plot, we need the maximum label value across all trials to define our bar segments
+max_label = max(max(trial.keys()) for trial in normalised_trial_counts)
 
-# Plotting
-fig, ax = plt.subplots(figsize=(12, 6))
-width = 0.2  # Bar width
-for i in range(len(slices)):
-    ax.bar(x_values + i*width, plot_data[i], width, label=f'Slice {i+1}')
+# Initialise a matrix for plotting: rows are trials, columns are possible label values
+plot_matrix = np.zeros((len(normalised_trial_counts), max_label + 1))
 
-ax.set_xticks(x_values + width / 2)
-ax.set_xticklabels(x_values)
-ax.set_xlabel('Int Values')
-ax.set_ylabel('Occurrences')
-ax.set_title('Occurrences of Labels in each Trial')
-ax.legend()
+# Populate the plot matrix
+for i, trial_counts in enumerate(normalised_trial_counts):
+    for label, normalized_count in trial_counts.items():
+        plot_matrix[i, label] = normalized_count
 
+# Plotting each trial's normalised label distribution as stacked bars
+fig, ax = plt.subplots(figsize=(14, 8))
+trial_indices = np.arange(1, len(normalised_trial_counts) + 1)
+
+for label in range(max_label + 1):
+    # Get the bottom offset for the current label by summing all previous labels' heights
+    bottom = np.sum(plot_matrix[:, :label], axis=1)
+    ax.bar(trial_indices, plot_matrix[:, label], bottom=bottom, label=f'Label {label}')
+
+ax.set_xticks(trial_indices)
+ax.set_xticklabels([f'{i}' for i in range(1, len(normalised_trial_counts) + 1)])
+ax.set_xlabel('Trials')
+ax.set_ylabel('Normalised Count')
+ax.set_title('Normalised Distribution of Labels Across Trials')
+ax.legend(title='Labels', bbox_to_anchor=(1.05, 1), loc='upper left')
+
+plt.tight_layout()
 plt.show()
 
 #%%
@@ -322,14 +335,14 @@ plt.show()
 # timeseries calculations are based on this range
 ###
 
-syn_frame_start = 19527
-syn_frame_end = 19527+81
+syn_frame_start = 9906
+syn_frame_end = 9906+82
 
-fig3 = b_utils.plot_cluster_wav_mags(proj, labels, 9, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+fig3 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_grid, y_grid)
 
 #fig4 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, compare_to=True, comp_label=8)
 
-fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_grid, y_grid)
+fig5 = b_utils.plot_cluster_wav_mags(proj, labels, 2, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
 
 #%%
 
@@ -337,13 +350,16 @@ fig5 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_
 # FOR SYNERGIES: Calculate and plot the time series of each channel, the frame 
 # of each keypress, the onset and offset of each keypress; calculate and plot 
 # each channel to a normalised frame; calculate integrals of each channel;
-# calculate and plot additional occurrences of the synergy of interest and the
-# means of the identified channels with a CI of 95%
+# calculate and plot the mean and 95% CI of all channels over all occurrences
+# of the synergy of interest
 ###
 
 channels = ['Little', 'Ring', 'Middle', 'Index']
 colors = sns.color_palette(["#005F99","#FF449F","#FFEA6B","#00EAD3"])
 data = tracking_filtered[syn_frame_start:syn_frame_end, :] # Set data range
+
+def euclidean_distance_multivariate(a, b):
+    return np.linalg.norm(a - b)
 
 # Function to find onset and offset around a peak within a window
 def find_onset_offset(derivative, peak_index, window=15):
@@ -377,7 +393,7 @@ def detect_and_plot_time_series(ax, x_range, y_values_combined, channels, colors
 
     for i, channel_name in enumerate(channels):
         derivative = np.diff(y_values_combined[:, i], prepend=y_values_combined[0, i])
-        peaks, _ = find_peaks(y_values_combined[:, i], height=y_threshold)
+        peaks, _ = find_peaks(y_values_combined[:, i], height=y_threshold, prominence = 10)
         total_peaks_across_channels += len(peaks)
         if plot:
             ax.plot(x_range, y_values_combined[:, i], label=channel_name, color=colors[i])
@@ -400,31 +416,13 @@ def detect_and_plot_time_series(ax, x_range, y_values_combined, channels, colors
 
     return total_peaks_across_channels, onset_offset_data, area_under_curve
 
-# Direct implementation of DTW
-def dtw_basic(s, t):
-    n, m = len(s), len(t)
-    dtw_matrix = np.zeros((n+1, m+1))
-    dtw_matrix[0, 1:] = np.inf
-    dtw_matrix[1:, 0] = np.inf
-    for i in range(1, n+1):
-        for j in range(1, m+1):
-            cost = abs(s[i-1] - t[j-1])
-            dtw_matrix[i, j] = cost + min(dtw_matrix[i-1, j],    # insertion
-                                          dtw_matrix[i, j-1],    # deletion
-                                          dtw_matrix[i-1, j-1])  # match
-    return dtw_matrix[n, m]
-
-# Function to identify additional occurrences of the synergy of interest
 def find_synergies_dtw(y_values_combined, full_dataset_y, syn_frame_start, syn_frame_end, num_segments=4, dist_threshold=None):
     dtw_distances = []
     num_channels = y_values_combined.shape[1]
-    target_length = len(y_values_combined)
-    
-    # Initialise with the target segment range to avoid selecting within this range
+    target_length = y_values_combined.shape[0]
     selected_ranges = [(syn_frame_start, syn_frame_end)]
 
     for i in range(len(full_dataset_y) - target_length + 1):
-        # Skip if the segment falls within the target range or overlaps with selected ranges
         if any(start <= i <= end or start <= i + target_length - 1 <= end for start, end in selected_ranges):
             continue
 
@@ -432,23 +430,20 @@ def find_synergies_dtw(y_values_combined, full_dataset_y, syn_frame_start, syn_f
         comparison_segment = full_dataset_y[i:i + target_length]
 
         for channel in range(num_channels):
-            target_channel_data = y_values_combined[:, channel]
-            comparison_channel_data = comparison_segment[:, channel]
-            distance = dtw_basic(target_channel_data, comparison_channel_data)
+            target_channel_data = np.array(y_values_combined[:, channel]).flatten()
+            comparison_channel_data = np.array(comparison_segment[:, channel]).flatten()
+            
+            # Now, pass the 1-D arrays to fastdtw
+            distance, _ = fastdtw(target_channel_data, comparison_channel_data, dist=euclidean_distance_multivariate)
             total_distance += distance
 
         avg_distance = total_distance / num_channels
-        
-        # Append the segment start index, its average DTW distance, and its end index
-        if avg_distance < dist_threshold:
+        if dist_threshold is None or avg_distance < dist_threshold:
             dtw_distances.append((i, avg_distance, i + target_length - 1))
     
-    # Sort distances, excluding the closest match if it's the segment itself
     dtw_distances = sorted(dtw_distances, key=lambda x: x[1])[1:]
-
     similar_segment_indices = []
     for idx, _, end_idx in dtw_distances:
-        # Select non-overlapping segments up to num_segments
         if not any(start <= idx <= end or start <= end_idx <= end for start, end in selected_ranges):
             similar_segment_indices.append(idx)
             selected_ranges.append((idx, end_idx))
@@ -459,43 +454,36 @@ def find_synergies_dtw(y_values_combined, full_dataset_y, syn_frame_start, syn_f
 
 # Function to calculate the mean of identified occurrences with CI
 def plot_with_confidence_intervals(ax, data, colors, channel_names):
-    
+
     for i, channel in enumerate(channel_names):
         mean_series = np.mean(data[:, :, i], axis=0)
-        ci = sem(data[:, :, i], axis=0) * t.ppf((1 + 0.95) / 2., data.shape[0]-1)
+        ci = sem(data[:, :, i], axis=0) * t.ppf((1 + 0.95) / 2., data.shape[0] - 1)
         ax.plot(mean_series, label=channel, color=colors[i])
-        ax.fill_between(range(len(mean_series)), mean_series-ci, mean_series+ci, color=colors[i], alpha=0.2)
+        ax.fill_between(range(len(mean_series)), mean_series - ci, mean_series + ci, color=colors[i], alpha=0.2)
     ax.legend()
     ax.set_title("Mean of Time Series with Confidence Intervals")
 
-# Function to plot the synergy of interest, identified occurrences and mean
-def series_analysis_dtw(full_dataset_y, y_values_combined, syn_frame_start, syn_frame_end, similar_segment_indices, channels, colors, dist_threshold=None):
-    fig, axs = plt.subplots(6, 1, figsize=(14, 36), sharex=True)
-    
-    # Plot the target time series
-    for i, channel_name in enumerate(channels):
-        axs[0].plot(y_values_combined[:, i], label=channel_name, color=colors[i])
-    axs[0].set_title("Synergy occurrence 1")
-    axs[0].legend()
+def series_analysis_dtw(full_dataset_y, y_values_combined, similar_segment_indices, channels, colors):
 
     # Data container for calculating mean and confidence interval
-    all_data = np.empty((len(similar_segment_indices)+1, len(y_values_combined), len(channels)))
+    all_data = np.empty((len(similar_segment_indices) + 1, y_values_combined.shape[0], len(channels)))
+
+    # Populate the first entry with the target time series
     all_data[0, :, :] = y_values_combined
 
-    # Plot each similar time series in subplots
+    # Populate subsequent entries with similar time series data
     for idx, segment_idx in enumerate(similar_segment_indices):
         start = segment_idx
-        end = start + len(y_values_combined)
+        end = start + y_values_combined.shape[0]
         similar_segment = full_dataset_y[start:end, :]
-        all_data[idx+1, :, :] = similar_segment
+        all_data[idx + 1, :, :] = similar_segment
 
-        for i, channel_name in enumerate(channels):
-            axs[idx+1].plot(similar_segment[:, i], label=channel_name, color=colors[i])
-        axs[idx+1].set_title(f"Synergy occurrence {idx+2}")
+    # Create a figure for plotting
+    fig, ax = plt.subplots(figsize=(14, 6))
 
-    # Plot the mean of the target and similar time series with confidence intervals
-    plot_with_confidence_intervals(axs[-1], all_data, colors, channels)
-    
+    # Plot the mean of the target and similar time series segments with confidence intervals
+    plot_with_confidence_intervals(ax, all_data, colors, channels)
+
     plt.tight_layout()
     plt.show()
 
@@ -511,7 +499,7 @@ normalised_frequency_hz = normalise_peaks_to_hz(total_peaks_across_channels, syn
 ax.set_title('Time Series of Channels with Detected Keypresses')
 ax.set_xlabel('Frame Index')
 ax.set_ylabel('Y Position')
-ax.text(0.125, 0.9, f"Normalised Frequency: {normalised_frequency_hz:.3f} Hz", transform=ax.transAxes, color='red')
+ax.text(0.025, 0.05, f"Normalised Frequency: {normalised_frequency_hz:.3f} Hz", transform=ax.transAxes, color='red')
 ax.legend()
 
 plt.show()
@@ -552,10 +540,10 @@ plt.show()
 full_dataset_y = process_y_values_full(tracking_filtered)
 
 similar_segment_indices = find_synergies_dtw(y_values_combined, full_dataset_y,
-            syn_frame_start, syn_frame_end, num_segments=4, dist_threshold=400)
+            syn_frame_start, syn_frame_end, num_segments=10, dist_threshold=450)
 
-series_analysis_dtw(full_dataset_y, y_values_combined, syn_frame_start,
-            syn_frame_end, similar_segment_indices, channels, colors, dist_threshold=400)
+series_analysis_dtw(full_dataset_y, y_values_combined,similar_segment_indices, 
+            channels, colors)
 
 #%%
 
@@ -650,7 +638,7 @@ plt.show()
 
 # Plot percent of frames detected as overlap
 plt.figure(figsize=(6, 4))
-sns.barplot(x=['Total Overlap'], y=[percent_overlap], palette='viridis')
+sns.barplot(x=['Total Overlap'], y=[percent_overlap], palette='Purples')
 plt.title('Total Percent Overlap Among Channels')
 plt.ylabel('Percent Overlap')
 plt.ylim(0, 100)  # Assuming percent values, adjust if necessary
@@ -724,4 +712,3 @@ plt.show()
 
 # TODO Convert CKPS calculations from Matlab to Python and add
 # TODO Convert micro-online and micro-offline code from Matlab to Python and add
-# TODO Evolution, then consistency, then population
