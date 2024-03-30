@@ -41,7 +41,7 @@ tracking = data_loading.load_tracking (mysesh, dlc=True, feats=features)
 
 # Create variables for and apply Savitzky-Golay filter
 tracking_filtered = tracking.copy() # Create copy of tracking to filter
-window_length = 10  # Choose an odd number for the window size
+window_length = 9  # Choose an odd number for the window size
 polyorder = 1  # Polynomial order
 for col in range(1, 8, 2):  # Iterate over y-value columns (1, 3, 5, 7)
     tracking_filtered[:, col] = savgol_filter(tracking[:, col], window_length, polyorder)
@@ -291,22 +291,22 @@ for trial_name, slice_range in trial.items():
     non_negative_labels = slice_labels[slice_labels >= 0]
     unique, counts = np.unique(non_negative_labels, return_counts=True)
     
-    # Normalize counts to make the sum equal to 1
-    normalized_counts = counts / counts.sum()
+    # Normalise counts to make the sum equal to 1
+    normalised_counts = counts / counts.sum()
     # Create a dict for this trial's normalized counts
-    trial_count = dict(zip(unique, normalized_counts))
+    trial_count = dict(zip(unique, normalised_counts))
     normalised_trial_counts.append(trial_count)
 
-# To plot, we need the maximum label value across all trials to define our bar segments
+# To plot, we calculate the maximum label count across all trials to define our bar segments
 max_label = max(max(trial.keys()) for trial in normalised_trial_counts)
 
-# Initialise a matrix for plotting: rows are trials, columns are possible label values
+# Initialise a matrix for plotting: rows are trials, columns are label values
 plot_matrix = np.zeros((len(normalised_trial_counts), max_label + 1))
 
 # Populate the plot matrix
 for i, trial_counts in enumerate(normalised_trial_counts):
-    for label, normalized_count in trial_counts.items():
-        plot_matrix[i, label] = normalized_count
+    for label, normalised_count in trial_counts.items():
+        plot_matrix[i, label] = normalised_count
 
 # Plotting each trial's normalised label distribution as stacked bars
 fig, ax = plt.subplots(figsize=(14, 8))
@@ -358,6 +358,7 @@ channels = ['Little', 'Ring', 'Middle', 'Index']
 colors = sns.color_palette(["#005F99","#FF449F","#FFEA6B","#00EAD3"])
 data = tracking_filtered[syn_frame_start:syn_frame_end, :] # Set data range
 
+# Function to calculate the Euclidean distance between two multivariate data points
 def euclidean_distance_multivariate(a, b):
     return np.linalg.norm(a - b)
 
@@ -416,6 +417,7 @@ def detect_and_plot_time_series(ax, x_range, y_values_combined, channels, colors
 
     return total_peaks_across_channels, onset_offset_data, area_under_curve
 
+# Function to identify segments within a full dataset that are similar to a target time series using Dynamic Time Warping (DTW)
 def find_synergies_dtw(y_values_combined, full_dataset_y, syn_frame_start, syn_frame_end, num_segments=4, dist_threshold=None):
     dtw_distances = []
     num_channels = y_values_combined.shape[1]
@@ -463,6 +465,7 @@ def plot_with_confidence_intervals(ax, data, colors, channel_names):
     ax.legend()
     ax.set_title("Mean of Time Series with Confidence Intervals")
 
+# Function to compare a target time series with similar segments across a full dataset, plotting the mean and CI of segments
 def series_analysis_dtw(full_dataset_y, y_values_combined, similar_segment_indices, channels, colors):
 
     # Data container for calculating mean and confidence interval
@@ -481,7 +484,7 @@ def series_analysis_dtw(full_dataset_y, y_values_combined, similar_segment_indic
     # Create a figure for plotting
     fig, ax = plt.subplots(figsize=(14, 6))
 
-    # Plot the mean of the target and similar time series segments with confidence intervals
+    # Plot the mean of the target and similar time series segments with CI
     plot_with_confidence_intervals(ax, all_data, colors, channels)
 
     plt.tight_layout()
@@ -583,15 +586,15 @@ def calculate_overlaps(onset_offset_data):
             # Calculate potential overlap
             overlap = current_event[0] - next_event[0]
             
-            # If the calculated value is negative, it indicates an overlap
+            # If the calculated value is positive, it indicates an overlap
             if overlap > 0:
                 total_overlap_frames += overlap
 
     return total_overlap_frames, all_events_sorted
 
-total_peaks, onset_offset_data, area_under_curve = detect_and_plot_time_series(ax, x_range, y_values_combined, channels, colors, y_threshold, plot=False)  # plot=True if you want to visualize
+total_peaks, onset_offset_data, area_under_curve = detect_and_plot_time_series(ax, x_range, y_values_combined, channels, colors, y_threshold, plot=False)  # plot=True if you want to visualise
 total_overlap_frames, all_events_sorted = calculate_overlaps(onset_offset_data)
-percent_overlap = total_overlap_frames / len(y_values_combined) * 100  # Ensure y_values_combined is defined and accurate
+percent_overlap = total_overlap_frames / len(y_values_combined) * 100
 
 # Calculate magnitude of velocities and accelerations
 for i in range(y_values_combined.shape[1]):
@@ -653,7 +656,6 @@ print(f"Total percent overlap among channels: {percent_overlap:.2f}%")
 # and plot the noralised frequency of peaks in hz per trial 
 ###
 
-# Preparing for the plot
 fig, ax = plt.subplots(figsize=(18, 6))
 normalised_freq_per_trial = []
 
