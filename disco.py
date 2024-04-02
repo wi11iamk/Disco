@@ -48,13 +48,13 @@ for col in range(1, 8, 2):  # Iterate over y-value columns (1, 3, 5, 7)
     
 # Dictoionary to store y_threshold values specific to each participant
 y_threshold_values = {
-    '027': 350,
     '012': 330,
+    '027': 350,
     '049': 400,
     # Add more participants as needed
 }
 
-participant_number = '027' # Enter participant number from HUB-DT session here
+participant_number = '012' # Enter participant number from HUB-DT session here
 y_threshold = y_threshold_values.get(participant_number)
 
 # Initialise a dictionary to store frame lengths for each trial
@@ -188,15 +188,17 @@ for i in range(len(slice_data_segments) - 1):
 # data; plot cluster distance tree; plot cluster labels atop embedded data
 ###
 
-clusterobj = hdb_clustering.hdb_scan(embed, 500, 50, selection='leaf', cluster_selection_epsilon=0.20)
+clusterobj = hdb_clustering.hdb_scan(embed, 500, 50, selection='leaf', cluster_selection_epsilon=0.225)
 
 labels = clusterobj.labels_
 
 probabilities = clusterobj.probabilities_
 
-fig1 = hdb_clustering.plot_condensed_tree(clusterobj, select_clusts=True, label_clusts=True)
+n_colors = 20  # Number of colors for clusters
+noise_color = (1,1,1)  # A distinct color for noise
+color_palette = sns.color_palette("Paired", n_colors) + [noise_color]
 
-fig2 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, noise=False)
+fig, cluster_colors = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, color_palette, noise=False)
 
 #%%
 
@@ -241,7 +243,7 @@ def calculate_label_data(arr, threshold=0):
                     count = 0
                 minus_one_counter = 0  # Reset -1 counter
     
-    # Finalize the last sequence
+    # Finalise the last sequence
     if current_val is not None and count > 0:
         finalise_count(continuous_counts, current_val, count, start_frame)
     
@@ -280,7 +282,7 @@ a_labels_data = calculate_label_data(a_labels, threshold=5)
 #%%
 
 ###
-# Calculate the distribution of labels within each trial
+# FOR TRIALS: Calculate the distribution of labels within each trial
 ###
 
 # Initialise the normalised count storage
@@ -293,7 +295,7 @@ for trial_name, slice_range in trial.items():
     
     # Normalise counts to make the sum equal to 1
     normalised_counts = counts / counts.sum()
-    # Create a dict for this trial's normalized counts
+    # Create a dict for this trial's normalised counts
     trial_count = dict(zip(unique, normalised_counts))
     normalised_trial_counts.append(trial_count)
 
@@ -309,13 +311,15 @@ for i, trial_counts in enumerate(normalised_trial_counts):
         plot_matrix[i, label] = normalised_count
 
 # Plotting each trial's normalised label distribution as stacked bars
+
 fig, ax = plt.subplots(figsize=(14, 8))
 trial_indices = np.arange(1, len(normalised_trial_counts) + 1)
 
-for label in range(max_label + 1):
-    # Get the bottom offset for the current label by summing all previous labels' heights
+# Exclude noise by starting from label 0 and going up to max_label
+for label in range(0, max_label + 1):
     bottom = np.sum(plot_matrix[:, :label], axis=1)
-    ax.bar(trial_indices, plot_matrix[:, label], bottom=bottom, label=f'Label {label}')
+    color = color_palette[label]  # Directly index into color_palette, excluding noise
+    ax.bar(trial_indices, plot_matrix[:, label], bottom=bottom, color=color, label=f'Label {label}')
 
 ax.set_xticks(trial_indices)
 ax.set_xticklabels([f'{i}' for i in range(1, len(normalised_trial_counts) + 1)])
@@ -335,8 +339,8 @@ plt.show()
 # timeseries calculations are based on this range
 ###
 
-syn_frame_start = 9906
-syn_frame_end = 9906+82
+syn_frame_start = 25320
+syn_frame_end = 25320+90
 
 fig3 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_grid, y_grid)
 
@@ -387,27 +391,33 @@ def process_y_values_full(data):
     return y_values_combined_full
 
 # Function to plot time series and detect key events
-def detect_and_plot_time_series(ax, x_range, y_values_combined, channels, colors, y_threshold, plot=True):
+def time_series_events(ax, x_range, y_values_combined, channels, colors, y_threshold, plot=True):
     total_peaks_across_channels = 0
     onset_offset_data = {channel: [] for channel in channels}
     area_under_curve = []
+    peak_indices = []
 
     for i, channel_name in enumerate(channels):
         derivative = np.diff(y_values_combined[:, i], prepend=y_values_combined[0, i])
         peaks, _ = find_peaks(y_values_combined[:, i], height=y_threshold, prominence = 10)
         total_peaks_across_channels += len(peaks)
-        if plot:
+        for peak in peaks:
+            peak_indices.append((peak, channel_name))
+        peak_indices.sort(key=lambda x: x[0])
+
+    for peak_idx, (peak, channel_name) in enumerate(peak_indices):
+        onset, offset = find_onset_offset(derivative, peak)
+        # Directly store onset, peak, and offset data without calculating an index
+        onset_offset_data[channel_name].append({'onset': onset, 'peak': peak, 'offset': offset})
+            
+    if plot:
+        for i, channel_name in enumerate(channels):
             ax.plot(x_range, y_values_combined[:, i], label=channel_name, color=colors[i])
-            for peak in peaks:
+            for event_data in onset_offset_data[channel_name]:
+                peak = event_data['peak']
                 ax.plot(x_range[peak], y_values_combined[peak, i], 'r*')
-        for peak_idx, peak in enumerate(peaks):
-            onset, offset = find_onset_offset(derivative, peak)
-            # Store onset, offset with corresponding peak index for each channel
-            onset_offset_data[channel_name].append((onset, 'onset', channel_name, peak_idx))
-            onset_offset_data[channel_name].append((offset, 'offset', channel_name, peak_idx))
-            if plot:
-                ax.plot(x_range[onset], y_values_combined[onset, i], 'go')
-                ax.plot(x_range[offset], y_values_combined[offset, i], 'mo')
+                ax.plot(x_range[event_data['onset']], y_values_combined[event_data['onset'], i], 'go')
+                ax.plot(x_range[event_data['offset']], y_values_combined[event_data['offset'], i], 'mo')
 
         # Calculate area under curve using simpson's rule for each channel and append to list
         area_under_curve = [simpson(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
@@ -418,7 +428,7 @@ def detect_and_plot_time_series(ax, x_range, y_values_combined, channels, colors
     return total_peaks_across_channels, onset_offset_data, area_under_curve
 
 # Function to identify segments within a full dataset that are similar to a target time series using Dynamic Time Warping (DTW)
-def find_synergies_dtw(y_values_combined, full_dataset_y, syn_frame_start, syn_frame_end, num_segments=4, dist_threshold=None):
+def find_similar_series(y_values_combined, full_dataset_y, syn_frame_start, syn_frame_end, num_segments=4, dist_threshold=None):
     dtw_distances = []
     num_channels = y_values_combined.shape[1]
     target_length = y_values_combined.shape[0]
@@ -455,7 +465,7 @@ def find_synergies_dtw(y_values_combined, full_dataset_y, syn_frame_start, syn_f
     return similar_segment_indices
 
 # Function to calculate the mean of identified occurrences with CI
-def plot_with_confidence_intervals(ax, data, colors, channel_names):
+def mean_with_confidence_intervals(ax, data, colors, channel_names):
 
     for i, channel in enumerate(channel_names):
         mean_series = np.mean(data[:, :, i], axis=0)
@@ -465,8 +475,8 @@ def plot_with_confidence_intervals(ax, data, colors, channel_names):
     ax.legend()
     ax.set_title("Mean of Time Series with Confidence Intervals")
 
-# Function to compare a target time series with similar segments across a full dataset, plotting the mean and CI of segments
-def series_analysis_dtw(full_dataset_y, y_values_combined, similar_segment_indices, channels, colors):
+# Function to store all identified occurrnces and plot the mean of each channel
+def plot_similar_series(full_dataset_y, y_values_combined, similar_segment_indices, channels, colors):
 
     # Data container for calculating mean and confidence interval
     all_data = np.empty((len(similar_segment_indices) + 1, y_values_combined.shape[0], len(channels)))
@@ -485,7 +495,7 @@ def series_analysis_dtw(full_dataset_y, y_values_combined, similar_segment_indic
     fig, ax = plt.subplots(figsize=(14, 6))
 
     # Plot the mean of the target and similar time series segments with CI
-    plot_with_confidence_intervals(ax, all_data, colors, channels)
+    mean_with_confidence_intervals(ax, all_data, colors, channels)
 
     plt.tight_layout()
     plt.show()
@@ -496,7 +506,7 @@ y_values_combined, normalised_y_values, positive_y_values = process_y_values(dat
 x_range = np.arange(syn_frame_start, syn_frame_end)
 
 fig, ax = plt.subplots(figsize=(14, 6))
-total_peaks_across_channels, onset_offset_data, area_under_curve = detect_and_plot_time_series(ax, x_range, y_values_combined, channels, colors, y_threshold)
+total_peaks_across_channels, onset_offset_data, area_under_curve = time_series_events(ax, x_range, y_values_combined, channels, colors, y_threshold)
 normalised_frequency_hz = normalise_peaks_to_hz(total_peaks_across_channels, syn_frame_end - syn_frame_start + 1)
 
 ax.set_title('Time Series of Channels with Detected Keypresses')
@@ -517,12 +527,6 @@ ax2.set_ylabel('Adjusted Y Position')
 ax2.legend()
 plt.show()
 
-# Integral plot data
-df_areas = pd.DataFrame({
-    'Channel': channels,
-    'Area Under Curve': area_under_curve
-})
-
 # Plot the integrals for each channel
 plt.figure(figsize=(6, 4))
 bottom_val = 0 # Starting point for stacking
@@ -542,10 +546,10 @@ plt.show()
 # Process and plot time series for additional occurrences
 full_dataset_y = process_y_values_full(tracking_filtered)
 
-similar_segment_indices = find_synergies_dtw(y_values_combined, full_dataset_y,
+similar_segment_indices = find_similar_series(y_values_combined, full_dataset_y,
             syn_frame_start, syn_frame_end, num_segments=10, dist_threshold=450)
 
-series_analysis_dtw(full_dataset_y, y_values_combined,similar_segment_indices, 
+plot_similar_series(full_dataset_y, y_values_combined,similar_segment_indices, 
             channels, colors)
 
 #%%
@@ -568,13 +572,15 @@ y_values_combined, normalised_y_values, positive_y_values = process_y_values(dat
 def calculate_overlaps(onset_offset_data):
     total_overlap_frames = 0
 
-    # Convert onset_offset_data to a flat list of (time, type, channel, peak_index) tuples
+    # Convert onset_offset_data to a flat list of dictionaries with added channel information
     all_events = []
     for channel, events in onset_offset_data.items():
-        all_events.extend(events)
-    
-    # Sort all events by peak index, then by time to maintain the sequence of events as they occurred
-    all_events_sorted = sorted(all_events, key=lambda x: (x[2], x[0]))
+        for event in events:
+            # Append event with channel information
+            all_events.append({**event, 'channel': channel})
+
+    # Sort all events by time of the event ('onset' and 'offset') to maintain the sequence of events as they occurred
+    all_events_sorted = sorted(all_events, key=lambda x: x['onset'])
 
     # Iterate through sorted events to find overlaps between offsets and subsequent onsets across channels
     for i in range(len(all_events_sorted) - 1):
@@ -582,9 +588,9 @@ def calculate_overlaps(onset_offset_data):
         next_event = all_events_sorted[i + 1]
         
         # Ensure we are comparing an offset to a subsequent onset and they are from different channels
-        if current_event[1] == 'offset' and next_event[1] == 'onset':
+        if 'offset' in current_event and 'onset' in next_event and current_event['channel'] != next_event['channel']:
             # Calculate potential overlap
-            overlap = current_event[0] - next_event[0]
+            overlap = current_event['offset'] - next_event['onset']
             
             # If the calculated value is positive, it indicates an overlap
             if overlap > 0:
@@ -592,7 +598,7 @@ def calculate_overlaps(onset_offset_data):
 
     return total_overlap_frames, all_events_sorted
 
-total_peaks, onset_offset_data, area_under_curve = detect_and_plot_time_series(ax, x_range, y_values_combined, channels, colors, y_threshold, plot=False)  # plot=True if you want to visualise
+total_peaks, onset_offset_data, area_under_curve = time_series_events(ax, x_range, y_values_combined, channels, colors, y_threshold, plot=False)  # plot=True if you want to visualise
 total_overlap_frames, all_events_sorted = calculate_overlaps(onset_offset_data)
 percent_overlap = total_overlap_frames / len(y_values_combined) * 100
 
