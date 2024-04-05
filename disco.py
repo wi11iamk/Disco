@@ -11,7 +11,7 @@ Created on Wed Feb 28 19:55:56 2024
 # Import necessary libraries
 ###
 
-import numpy as np, pandas as pd, umap 
+import numpy as np, pandas as pd, umap, umap.plot
 import matplotlib.pyplot as plt, seaborn as sns
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
@@ -35,7 +35,7 @@ mysesh = behav_session_params.load_session_params ('Mine')
 
 features = data_loading.dlc_get_feats (mysesh)
 
-del features[4:7] # Delete features, should you want to
+del features[4:7] # Delete features
 
 tracking = data_loading.load_tracking (mysesh, dlc=True, feats=features)
 
@@ -93,6 +93,13 @@ mapper = umap.UMAP(n_neighbors=30, n_components=2, min_dist=0.2).fit(proj)
 embed = mapper.embedding_
 
 plt.scatter(embed[:, 0], embed[:, 1], s=0.25, c='blue', alpha=0.25)
+
+umap.plot.connectivity(mapper)
+
+umap.plot.diagnostic(mapper, diagnostic_type='pca')
+
+local_dims = umap.plot.diagnostic(mapper, diagnostic_type='local_dim')
+
             
 #%%
 
@@ -188,15 +195,17 @@ for i in range(len(slice_data_segments) - 1):
 # data; plot cluster distance tree; plot cluster labels atop embedded data
 ###
 
-clusterobj = hdb_clustering.hdb_scan(embed, 500, 50, selection='leaf', cluster_selection_epsilon=0.225)
+clusterobj = hdb_clustering.hdb_scan(embed, 200, 20, selection='leaf', cluster_selection_epsilon=0.2)
 
 labels = clusterobj.labels_
 
 probabilities = clusterobj.probabilities_
 
-n_colors = 20  # Number of colors for clusters
-noise_color = (1,1,1)  # A distinct color for noise
-color_palette = sns.color_palette("Paired", n_colors) + [noise_color]
+n_colors = 20  # Number of colorus for clusters
+color_palette = sns.color_palette("Paired", n_colors)
+noise_color = (0.75,0.75,0.75)  # A distinct colour for noise
+#noise_color = (1,1,1)
+color_palette.append(noise_color)  # Append noise color at the end
 
 fig, cluster_colors = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, color_palette, noise=False)
 
@@ -282,51 +291,77 @@ a_labels_data = calculate_label_data(a_labels, threshold=5)
 #%%
 
 ###
-# FOR TRIALS: Calculate the distribution of labels within each trial
+# FOR TRIALS: Calculate the distribution of labels within each trial, one plot
+# with, and one without, noise
 ###
 
-# Initialise the normalised count storage
 normalised_trial_counts = []
+normalised_trial_counts_including_noise = []
 
 for trial_name, slice_range in trial.items():
     slice_labels = a_labels[slice_range[0]:slice_range[1]+1]
+    # For non-negative labels
     non_negative_labels = slice_labels[slice_labels >= 0]
-    unique, counts = np.unique(non_negative_labels, return_counts=True)
+    unique_non_neg, counts_non_neg = np.unique(non_negative_labels, return_counts=True)
+    normalised_counts_non_neg = counts_non_neg / counts_non_neg.sum()
+    trial_count_non_neg = dict(zip(unique_non_neg, normalised_counts_non_neg))
+    normalised_trial_counts.append(trial_count_non_neg)
     
-    # Normalise counts to make the sum equal to 1
+    # For including noise labels
+    unique, counts = np.unique(slice_labels, return_counts=True)  # This time, keep -1 labels
     normalised_counts = counts / counts.sum()
-    # Create a dict for this trial's normalised counts
     trial_count = dict(zip(unique, normalised_counts))
-    normalised_trial_counts.append(trial_count)
+    normalised_trial_counts_including_noise.append(trial_count)
 
-# To plot, we calculate the maximum label count across all trials to define our bar segments
-max_label = max(max(trial.keys()) for trial in normalised_trial_counts)
+# Define the maximum label value with and without noise label
+max_label_non_neg = max(max(trial.keys()) for trial in normalised_trial_counts)
+max_label = max(max(trial.keys()) for trial in normalised_trial_counts_including_noise)
 
-# Initialise a matrix for plotting: rows are trials, columns are label values
-plot_matrix = np.zeros((len(normalised_trial_counts), max_label + 1))
+# Prepare plot data
+plot_matrix_non_neg = np.zeros((len(normalised_trial_counts), max_label_non_neg + 1))
+plot_matrix = np.zeros((len(normalised_trial_counts_including_noise), max_label + 2))  # +2 for indexing and noise
 
-# Populate the plot matrix
+# Populate plot matrices
 for i, trial_counts in enumerate(normalised_trial_counts):
     for label, normalised_count in trial_counts.items():
-        plot_matrix[i, label] = normalised_count
+        plot_matrix_non_neg[i, label] = normalised_count
+        
+for i, trial_counts in enumerate(normalised_trial_counts_including_noise):
+    for label, normalised_count in trial_counts.items():
+        plot_matrix[i, label+1] = normalised_count  # +1 to offset for noise at index 0
 
-# Plotting each trial's normalised label distribution as stacked bars
-
+# Plot excluding noise
 fig, ax = plt.subplots(figsize=(14, 8))
 trial_indices = np.arange(1, len(normalised_trial_counts) + 1)
+for label in range(0, max_label_non_neg + 1):
+    bottom = np.sum(plot_matrix_non_neg[:, :label], axis=1)
+    color = color_palette[label] if label < len(color_palette) else (1, 1, 1)  # Fallback to white
+    ax.bar(trial_indices, plot_matrix_non_neg[:, label], bottom=bottom, color=color, label=f'Label {label}')
+ax.set_xticks(trial_indices)
+ax.set_title('Normalised Distribution Excluding Noise')
+ax.legend(title="Labels", loc="best", bbox_to_anchor=(1.0, 1.0))
 
-# Exclude noise by starting from label 0 and going up to max_label
-for label in range(0, max_label + 1):
-    bottom = np.sum(plot_matrix[:, :label], axis=1)
-    color = color_palette[label]  # Directly index into color_palette, excluding noise
-    ax.bar(trial_indices, plot_matrix[:, label], bottom=bottom, color=color, label=f'Label {label}')
+# Plot including noise
+fig, ax = plt.subplots(figsize=(14, 8))
+trial_indices = np.arange(1, len(normalised_trial_counts_including_noise) + 1)
+for label in range(-1, max_label + 1):
+    if label == -1:
+        # Directly use noise_color for label -1
+        color = noise_color
+    else:
+        # Use label's index directly for other labels
+        color = color_palette[label] if label < len(color_palette) - 1 else (1, 1, 1)  # Exclude the last noise color
+    # Calculate the correct bottom for stacking
+    if label == -1:
+        bottom = np.zeros(len(trial_indices))
+    else:
+        bottom = np.sum(plot_matrix[:, :label+1], axis=1)  # Include noise counts in bottom calculation
+    # Plot bars
+    ax.bar(trial_indices, plot_matrix[:, label+1], bottom=bottom, color=color, label=f'Label {label}')
 
 ax.set_xticks(trial_indices)
-ax.set_xticklabels([f'{i}' for i in range(1, len(normalised_trial_counts) + 1)])
-ax.set_xlabel('Trials')
-ax.set_ylabel('Normalised Count')
-ax.set_title('Normalised Distribution of Labels Across Trials')
-ax.legend(title='Labels', bbox_to_anchor=(1.05, 1), loc='upper left')
+ax.set_title('Normalisd Distribution Including Noise')
+ax.legend(title="Labels", loc="best", bbox_to_anchor=(1.0, 1.0))
 
 plt.tight_layout()
 plt.show()
@@ -339,8 +374,8 @@ plt.show()
 # timeseries calculations are based on this range
 ###
 
-syn_frame_start = 25320
-syn_frame_end = 25320+90
+syn_frame_start = 1220
+syn_frame_end = syn_frame_start+240
 
 fig3 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_grid, y_grid)
 
@@ -527,7 +562,7 @@ ax2.set_ylabel('Adjusted Y Position')
 ax2.legend()
 plt.show()
 
-# Plot the integrals for each channel
+# Plot integrals for each channel
 plt.figure(figsize=(6, 4))
 bottom_val = 0 # Starting point for stacking
 handles = []
@@ -547,7 +582,7 @@ plt.show()
 full_dataset_y = process_y_values_full(tracking_filtered)
 
 similar_segment_indices = find_similar_series(y_values_combined, full_dataset_y,
-            syn_frame_start, syn_frame_end, num_segments=10, dist_threshold=450)
+            syn_frame_start, syn_frame_end, num_segments=10, dist_threshold=1000)
 
 plot_similar_series(full_dataset_y, y_values_combined,similar_segment_indices, 
             channels, colors)
