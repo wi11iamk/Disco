@@ -17,7 +17,7 @@ def adjust_brightness(color, brightness_factor):
     return adjusted_color
 
 def custom_colour_list():
-    colours = plt.cm.Set1.colors  # Get all colors from tab10
+    colours = plt.cm.Set1.colors  # Get all colours from a chosen space
     selected_indices = [0, 1, 2, 3, 4, 5, 7]
     base_colors = [colours[i] for i in selected_indices]
 
@@ -30,15 +30,15 @@ def custom_colour_list():
     
     return custom_colors
 
-# Create the custom colormap
+# Create the custom colourmap
 custom_colors = custom_colour_list()
 custom_colormap = plt.cm.colors.ListedColormap(custom_colors)
 
-# Example plot to visualize the colormap
+# Example plot to visualize the colourmap
 x = np.random.rand(240)
 y = np.random.rand(240)
-colors = np.linspace(0, 1, 240)  # Use a continuous range of values mapped to the colormap
+colors = np.linspace(0, 1, 240)  # Use a continuous range of values mapped to the colourmap
 
 plt.scatter(x, y, c=colors, cmap=custom_colormap, alpha=0.6)
-plt.colorbar()  # Show the custom colormap scale
+plt.colorbar()  # Show the custom colourmap scale
 plt.show()
