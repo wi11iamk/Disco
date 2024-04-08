@@ -11,10 +11,11 @@ Created on Wed Feb 28 19:55:56 2024
 # Import necessary libraries
 ###
 
-import numpy as np, pandas as pd, umap, umap.plot
+import numpy as np, pandas as pd, umap, umap.plot, re
 import matplotlib.pyplot as plt, seaborn as sns
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
+from mycolours import custom_colour_list
 from hubdt import data_loading, behav_session_params, wavelets, t_sne, hdb_clustering, b_utils
 from scipy.stats import gaussian_kde, ks_2samp, sem, t
 from scipy.integrate import simpson
@@ -26,9 +27,8 @@ from fastdtw import fastdtw
 
 ###
 # Initialise the HUB-DT session; import all DLC features and tracking data;
-# apply Savitzky-Golay filter to each y time series; initialise dictionary to
-# store specific y_threshold values for peak detection for each participant;
-# initialise dictionary to store frame lengths of each trial 
+# apply Savitzky-Golay filter to each 'y' channel and normalise each first 
+# frame to 0; initialise dictionary to; store frame ranges of each trial 
 ###
 
 mysesh = behav_session_params.load_session_params ('Mine')
@@ -39,31 +39,20 @@ del features[4:7] # Delete features
 
 tracking = data_loading.load_tracking (mysesh, dlc=True, feats=features)
 
-# Create variables for and apply Savitzky-Golay filter
+# Apply Savitzky-Golay filter and normalise first frames to 0
 tracking_filtered = tracking.copy() # Create copy of tracking to filter
-window_length = 9  # Choose an odd number for the window size
-polyorder = 1  # Polynomial order
 for col in range(1, 8, 2):  # Iterate over y-value columns (1, 3, 5, 7)
-    tracking_filtered[:, col] = savgol_filter(tracking[:, col], window_length, polyorder)
+    # Apply Savitzky-Golay filter
+    tracking_filtered[:, col] = savgol_filter(tracking_filtered[:, col], 7, 1)
     
-# Dictoionary to store y_threshold values specific to each participant
-y_threshold_values = {
-    '012': 330,
-    '027': 350,
-    '049': 400,
-    # Add more participants as needed
-}
+    # Normalize the filtered y-values
+    tracking_filtered[:, col] -= tracking_filtered[0, col]
 
-participant_number = '012' # Enter participant number from HUB-DT session here
-y_threshold = y_threshold_values.get(participant_number)
-
-# Initialise a dictionary to store frame lengths for each trial
+# Initialise a dictionary to store frames
 trial = {}
-
 # Total number of trials
 total_trials = 36
-
-# Populate the dictionary with slices
+# Populate the dictionary with a slice of frames per trial
 for i in range(total_trials):
     key = f"{i+1}"  # Key name (e.g., '1' for trial 1)
     value = (i*1200, (i+1)*1200-1)  # Range for each slice
@@ -88,7 +77,7 @@ proj = np.transpose(proj)
 # Fit wavelet projection into two dimensional embedded space (UMAP); plot
 ###
 
-mapper = umap.UMAP(n_neighbors=30, n_components=2, min_dist=0.2).fit(proj)
+mapper = umap.UMAP(n_neighbors=40, n_components=2, min_dist=0.2).fit(proj)
 
 embed = mapper.embedding_
 
@@ -97,9 +86,6 @@ plt.scatter(embed[:, 0], embed[:, 1], s=0.25, c='blue', alpha=0.25)
 umap.plot.connectivity(mapper)
 
 umap.plot.diagnostic(mapper, diagnostic_type='pca')
-
-local_dims = umap.plot.diagnostic(mapper, diagnostic_type='local_dim')
-
             
 #%%
 
@@ -195,19 +181,15 @@ for i in range(len(slice_data_segments) - 1):
 # data; plot cluster distance tree; plot cluster labels atop embedded data
 ###
 
-clusterobj = hdb_clustering.hdb_scan(embed, 200, 20, selection='leaf', cluster_selection_epsilon=0.2)
+clusterobj = hdb_clustering.hdb_scan(embed, 150, 15, selection='leaf', cluster_selection_epsilon=0.13)
 
 labels = clusterobj.labels_
 
 probabilities = clusterobj.probabilities_
 
-n_colors = 20  # Number of colorus for clusters
-color_palette = sns.color_palette("Paired", n_colors)
-noise_color = (0.75,0.75,0.75)  # A distinct colour for noise
-#noise_color = (1,1,1)
-color_palette.append(noise_color)  # Append noise color at the end
+color_palette = custom_colour_list()
 
-fig, cluster_colors = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, color_palette, noise=False)
+fig, cluster_colors = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, color_palette)
 
 #%%
 
@@ -347,7 +329,7 @@ trial_indices = np.arange(1, len(normalised_trial_counts_including_noise) + 1)
 for label in range(-1, max_label + 1):
     if label == -1:
         # Directly use noise_color for label -1
-        color = noise_color
+        color = (0.5,0.5,0.5)
     else:
         # Use label's index directly for other labels
         color = color_palette[label] if label < len(color_palette) - 1 else (1, 1, 1)  # Exclude the last noise color
@@ -374,14 +356,14 @@ plt.show()
 # timeseries calculations are based on this range
 ###
 
-syn_frame_start = 1220
-syn_frame_end = syn_frame_start+240
+syn_frame_start = 25248
+syn_frame_end = syn_frame_start+120
 
 fig3 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_grid, y_grid)
 
 #fig4 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, compare_to=True, comp_label=8)
 
-fig5 = b_utils.plot_cluster_wav_mags(proj, labels, 2, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+fig5 = b_utils.plot_cluster_wav_mags(proj, labels, 11, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
 
 #%%
 
@@ -394,7 +376,7 @@ fig5 = b_utils.plot_cluster_wav_mags(proj, labels, 2, features, frequencies, wav
 ###
 
 channels = ['Little', 'Ring', 'Middle', 'Index']
-colors = sns.color_palette(["#005F99","#FF449F","#FFEA6B","#00EAD3"])
+colors = sns.color_palette(["#FF6B6B","#FFD93D","#6BCB77","#4D96FF"])
 data = tracking_filtered[syn_frame_start:syn_frame_end, :] # Set data range
 
 # Function to calculate the Euclidean distance between two multivariate data points
@@ -415,26 +397,20 @@ def normalise_peaks_to_hz(total_peaks, frames_in_window, frame_rate=120):
 
 # Function to slice, normalise, and invert y values
 def process_y_values(data):
-    y_values_combined = np.vstack((data[:, 1], data[:, 3], data[:, 5], data[:, 7])).T
-    normalised_y_values = y_values_combined - y_values_combined[0, :]
-    positive_y_values = np.abs(normalised_y_values)
-    return y_values_combined, normalised_y_values, positive_y_values
-
-# Function to access full data for DTW analysis
-def process_y_values_full(data):
-    y_values_combined_full = np.vstack((data[:, 1], data[:, 3], data[:, 5], data[:, 7])).T
-    return y_values_combined_full
+    y_values = np.vstack((data[:, 1], data[:, 3], data[:, 5], data[:, 7])).T
+    y_values_positive = np.abs(y_values)
+    return y_values, y_values_positive
 
 # Function to plot time series and detect key events
-def time_series_events(ax, x_range, y_values_combined, channels, colors, y_threshold, plot=True):
+def time_series_events(ax, x_range, y_values, channels, colors, y_threshold=10, plot=True):
     total_peaks_across_channels = 0
     onset_offset_data = {channel: [] for channel in channels}
     area_under_curve = []
     peak_indices = []
 
     for i, channel_name in enumerate(channels):
-        derivative = np.diff(y_values_combined[:, i], prepend=y_values_combined[0, i])
-        peaks, _ = find_peaks(y_values_combined[:, i], height=y_threshold, prominence = 10)
+        derivative = np.diff(y_values[:, i], prepend=y_values[0, i])
+        peaks, _ = find_peaks(y_values[:, i], height=y_threshold, prominence = 10)
         total_peaks_across_channels += len(peaks)
         for peak in peaks:
             peak_indices.append((peak, channel_name))
@@ -447,15 +423,15 @@ def time_series_events(ax, x_range, y_values_combined, channels, colors, y_thres
             
     if plot:
         for i, channel_name in enumerate(channels):
-            ax.plot(x_range, y_values_combined[:, i], label=channel_name, color=colors[i])
+            ax.plot(x_range, y_values[:, i], label=channel_name, color=colors[i])
             for event_data in onset_offset_data[channel_name]:
                 peak = event_data['peak']
-                ax.plot(x_range[peak], y_values_combined[peak, i], 'r*')
-                ax.plot(x_range[event_data['onset']], y_values_combined[event_data['onset'], i], 'go')
-                ax.plot(x_range[event_data['offset']], y_values_combined[event_data['offset'], i], 'mo')
+                ax.plot(x_range[peak], y_values[peak, i], 'r*')
+                ax.plot(x_range[event_data['onset']], y_values[event_data['onset'], i], 'go')
+                ax.plot(x_range[event_data['offset']], y_values[event_data['offset'], i], 'mo')
 
         # Calculate area under curve using simpson's rule for each channel and append to list
-        area_under_curve = [simpson(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
+        area_under_curve = [simpson(y_values_positive[:, i]) for i in range(y_values_positive.shape[1])]
 
     if plot:
         ax.legend()
@@ -463,21 +439,21 @@ def time_series_events(ax, x_range, y_values_combined, channels, colors, y_thres
     return total_peaks_across_channels, onset_offset_data, area_under_curve
 
 # Function to identify segments within a full dataset that are similar to a target time series using Dynamic Time Warping (DTW)
-def find_similar_series(y_values_combined, full_dataset_y, syn_frame_start, syn_frame_end, num_segments=4, dist_threshold=None):
+def find_similar_series(y_values, y_values_full, syn_frame_start, syn_frame_end, num_segments=4, dist_threshold=None):
     dtw_distances = []
-    num_channels = y_values_combined.shape[1]
-    target_length = y_values_combined.shape[0]
+    num_channels = y_values.shape[1]
+    target_length = y_values.shape[0]
     selected_ranges = [(syn_frame_start, syn_frame_end)]
 
-    for i in range(len(full_dataset_y) - target_length + 1):
+    for i in range(len(y_values_full) - target_length + 1):
         if any(start <= i <= end or start <= i + target_length - 1 <= end for start, end in selected_ranges):
             continue
 
         total_distance = 0
-        comparison_segment = full_dataset_y[i:i + target_length]
+        comparison_segment = y_values_full[i:i + target_length]
 
         for channel in range(num_channels):
-            target_channel_data = np.array(y_values_combined[:, channel]).flatten()
+            target_channel_data = np.array(y_values[:, channel]).flatten()
             comparison_channel_data = np.array(comparison_segment[:, channel]).flatten()
             
             # Now, pass the 1-D arrays to fastdtw
@@ -511,19 +487,19 @@ def mean_with_confidence_intervals(ax, data, colors, channel_names):
     ax.set_title("Mean of Time Series with Confidence Intervals")
 
 # Function to store all identified occurrnces and plot the mean of each channel
-def plot_similar_series(full_dataset_y, y_values_combined, similar_segment_indices, channels, colors):
+def plot_similar_series(y_values_full, y_values, similar_segment_indices, channels, colors):
 
     # Data container for calculating mean and confidence interval
-    all_data = np.empty((len(similar_segment_indices) + 1, y_values_combined.shape[0], len(channels)))
+    all_data = np.empty((len(similar_segment_indices) + 1, y_values.shape[0], len(channels)))
 
     # Populate the first entry with the target time series
-    all_data[0, :, :] = y_values_combined
+    all_data[0, :, :] = y_values
 
     # Populate subsequent entries with similar time series data
     for idx, segment_idx in enumerate(similar_segment_indices):
         start = segment_idx
-        end = start + y_values_combined.shape[0]
-        similar_segment = full_dataset_y[start:end, :]
+        end = start + y_values.shape[0]
+        similar_segment = y_values_full[start:end, :]
         all_data[idx + 1, :, :] = similar_segment
 
     # Create a figure for plotting
@@ -536,26 +512,23 @@ def plot_similar_series(full_dataset_y, y_values_combined, similar_segment_indic
     plt.show()
 
 # Process and plot time series for synergy of interest
-data = tracking_filtered[syn_frame_start:syn_frame_end, :]
-y_values_combined, normalised_y_values, positive_y_values = process_y_values(data)
+y_values_syn, y_values_positive = process_y_values(data)
 x_range = np.arange(syn_frame_start, syn_frame_end)
 
 fig, ax = plt.subplots(figsize=(14, 6))
-total_peaks_across_channels, onset_offset_data, area_under_curve = time_series_events(ax, x_range, y_values_combined, channels, colors, y_threshold)
+total_peaks_across_channels, onset_offset_data, area_under_curve = time_series_events(ax, x_range, y_values_syn, channels, colors)
 normalised_frequency_hz = normalise_peaks_to_hz(total_peaks_across_channels, syn_frame_end - syn_frame_start + 1)
-
 ax.set_title('Time Series of Channels with Detected Keypresses')
 ax.set_xlabel('Frame Index')
 ax.set_ylabel('Y Position')
 ax.text(0.025, 0.05, f"Normalised Frequency: {normalised_frequency_hz:.3f} Hz", transform=ax.transAxes, color='red')
 ax.legend()
-
 plt.show()
 
 # Plot normal and non-negative curves
 fig2, ax2 = plt.subplots(figsize=(14, 6))
 for i, channel_name in enumerate(channels):
-    ax2.plot(x_range, positive_y_values[:, i], label=channel_name, color=colors[i])
+    ax2.plot(x_range, y_values_positive[:, i], label=channel_name, color=colors[i])
 ax2.set_title('Normalised and Non-negative Curves')
 ax2.set_xlabel('Frame Index')
 ax2.set_ylabel('Adjusted Y Position')
@@ -579,12 +552,12 @@ plt.show()
 #%%
 
 # Process and plot time series for additional occurrences
-full_dataset_y = process_y_values_full(tracking_filtered)
+y_values_full, positive_full = process_y_values(tracking_filtered)
 
-similar_segment_indices = find_similar_series(y_values_combined, full_dataset_y,
-            syn_frame_start, syn_frame_end, num_segments=10, dist_threshold=1000)
+similar_segment_indices = find_similar_series(y_values_syn, y_values_full,
+            syn_frame_start, syn_frame_end, num_segments=10, dist_threshold=800)
 
-plot_similar_series(full_dataset_y, y_values_combined,similar_segment_indices, 
+plot_similar_series(y_values_full, y_values_syn, similar_segment_indices, 
             channels, colors)
 
 #%%
@@ -600,9 +573,6 @@ std_devs_velocity = []
 
 average_accelerations = []
 std_devs_acceleration = []
-
-data = tracking_filtered[syn_frame_start:syn_frame_end, :] # Set data range
-y_values_combined, normalised_y_values, positive_y_values = process_y_values(data)
 
 def calculate_overlaps(onset_offset_data):
     total_overlap_frames = 0
@@ -633,13 +603,13 @@ def calculate_overlaps(onset_offset_data):
 
     return total_overlap_frames, all_events_sorted
 
-total_peaks, onset_offset_data, area_under_curve = time_series_events(ax, x_range, y_values_combined, channels, colors, y_threshold, plot=False)  # plot=True if you want to visualise
+total_peaks, onset_offset_data, area_under_curve = time_series_events(ax, x_range, y_values_syn, channels, colors, plot=False)  # plot=True if you want to visualise
 total_overlap_frames, all_events_sorted = calculate_overlaps(onset_offset_data)
-percent_overlap = total_overlap_frames / len(y_values_combined) * 100
+percent_overlap = total_overlap_frames / len(y_values_syn) * 100
 
 # Calculate magnitude of velocities and accelerations
-for i in range(y_values_combined.shape[1]):
-    velocities = np.abs(np.diff(y_values_combined[:, i]))
+for i in range(y_values_syn.shape[1]):
+    velocities = np.abs(np.diff(y_values_syn[:, i]))
     accelerations = np.abs(np.diff(velocities))
     
     average_velocities.append(np.mean(velocities))
@@ -703,15 +673,12 @@ normalised_freq_per_trial = []
 trial_keys = list(trial.keys())  # Get a list of trial keys to use for x-ticks
 x_positions = range(1, len(trial_keys) + 1)  # Generate x positions for each bar
 
-# Iterate over each trial using enumerate for proper positioning
 for idx, (trial_number, (trial_start, trial_end)) in enumerate(trial.items(), start=1):
-    data = tracking_filtered[trial_start:trial_end, :]
-    y_values_combined = np.vstack((data[:, 1], data[:, 3], data[:, 5], data[:, 7])).T
+    # Slice the pre-processed y-values for the current trial
+    y_trial = y_values_full[trial_start:trial_end, :]
+    y_trial_positive = np.abs(y_trial)
 
-    normalised_y_values = y_values_combined - y_values_combined[0, :]
-    positive_y_values = np.abs(normalised_y_values)
-
-    area_under_curve = [simpson(positive_y_values[:, i]) for i in range(positive_y_values.shape[1])]
+    area_under_curve = [simpson(y_trial_positive[:, i]) for i in range(y_trial_positive.shape[1])]
     total_area = sum(area_under_curve)
     bottom_val = 0  
 
@@ -720,8 +687,8 @@ for idx, (trial_number, (trial_start, trial_end)) in enumerate(trial.items(), st
         ax.bar(x_positions[idx-1], area, bottom=bottom_val, color=colors[i])
         bottom_val += area
 
-    # Calculate normalised frequency for the trial
-    total_peaks_across_channels = sum([len(find_peaks(y_values_combined[:, i], prominence=17)[0]) for i in range(y_values_combined.shape[1])])
+    # FrequencyCalculate normalised frequency for the trial
+    total_peaks_across_channels = sum([len(find_peaks(y_trial[:, i], prominence=17)[0]) for i in range(y_trial.shape[1])])
     normalised_frequency_hz = normalise_peaks_to_hz(total_peaks_across_channels, trial_end - trial_start + 1)
     normalised_freq_per_trial.append(normalised_frequency_hz)
 
@@ -753,5 +720,41 @@ plt.show()
 
 #%%
 
-# TODO Convert CKPS calculations from Matlab to Python and add
+targetSequence = [4,1,3,2,4]
+
+# Function to analyse the response stream
+def patternDetect(stream, targetSequence=[4,1,3,2,4]):
+  # If stream shorter than targetSequence, return zero score
+  if  len(stream)<len(targetSequence):
+    print('Issue with this stream - score is zero')
+    return 0
+  # Past this point, len(stream) >= len(targetSequence)
+  # Convert lists to string, numpy arrays
+  trialSeqString = ''.join(str(k) for k in list(stream)) #string version of stream
+  targetSequence = np.array(targetSequence)
+  trialSequence = np.array(stream)
+
+  targSeqSize = len(targetSequence)
+  
+  # Start pattern detector
+  checkKPressMat = np.tile(trialSequence,(targSeqSize,1)) # Replicate Key Press sequence
+  for i in range(targSeqSize): # i for each possible shift of target sequence
+    shiftedTargSeq = np.roll(targetSequence,-i) # Shift of target sequence
+    shiftedTargSeqString = ''.join(str(k) for k in shiftedTargSeq) # String version of shifted target sequence
+
+    # List that contant starting index of every nonoverlapping match between stream and the shifted target, possibly empty list
+    iCorrectSequence = [k.start(0) for k in re.finditer(shiftedTargSeqString,trialSeqString)] 
+
+    for j in iCorrectSequence: # For each starting index
+      checkKPressMat[i,j:j + targSeqSize] = 0 # In checkKPressMat replace match with zeros
+  
+  trialScore = ((checkKPressMat == 0).sum(axis=0) > 0).sum() # Total number of columns of checkKPressMat with at least one zero
+  return trialScore
+
+print(patternDetect([4,4,1,3,2,4]))
+
+#%%
+
+# TODO Convert Matlab, Psytoolkit .txt file processing and add
 # TODO Convert micro-online and micro-offline code from Matlab to Python and add
+# TODO Create dictionary for participant specific parameters
