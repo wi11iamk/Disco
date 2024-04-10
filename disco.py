@@ -720,7 +720,7 @@ plt.show()
 
 ###
 # Import, parse, and analyse PsyToolkit .data.txt files for correct keypresses
-# per second over trial, micro-online and -offline periods
+# per second over trial, micro-online and -offline periods; return .csv file
 ###
 
 def patternDetect(stream, targetSequence=[4,1,3,2,4]):
