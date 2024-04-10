@@ -11,7 +11,7 @@ Created on Wed Feb 28 19:55:56 2024
 # Import necessary libraries
 ###
 
-import numpy as np, pandas as pd, umap, umap.plot, re
+import numpy as np, pandas as pd, umap, umap.plot
 import matplotlib.pyplot as plt, seaborn as sns
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
@@ -28,7 +28,7 @@ from fastdtw import fastdtw
 ###
 # Initialise the HUB-DT session; import all DLC features and tracking data;
 # apply Savitzky-Golay filter to each 'y' channel and normalise each first 
-# frame to 0; initialise dictionary to; store frame ranges of each trial 
+# frame to 0; initialise dictionary to store frame values for each trial 
 ###
 
 mysesh = behav_session_params.load_session_params ('Mine')
@@ -178,7 +178,7 @@ for i in range(len(slice_data_segments) - 1):
 
 ###
 # Perform HDBSCAN clustering to obtain labels and probabilities from embedded
-# data; plot cluster distance tree; plot cluster labels atop embedded data
+# data; plot cluster labels atop embedded data
 ###
 
 clusterobj = hdb_clustering.hdb_scan(embed, 150, 15, selection='leaf', cluster_selection_epsilon=0.13)
@@ -195,8 +195,7 @@ fig, cluster_colors = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabili
 
 ### 
 # Calcuate the mean length in frames of each label; store the first frame of
-# the first five occurrences of each label in a list of tuples; calculate total
-# uses and percent of time in use for each label
+# the first occurrence of each label; calculate total uses for each label
 ###
 
 a_labels = np.reshape(labels, (-1, 1))
@@ -273,8 +272,8 @@ a_labels_data = calculate_label_data(a_labels, threshold=5)
 #%%
 
 ###
-# FOR TRIALS: Calculate the distribution of labels within each trial, one plot
-# with, and one without, noise
+# FOR TRIALS: Calculate the distribution of labels within each trial and plot
+# with and without noise
 ###
 
 normalised_trial_counts = []
@@ -369,10 +368,9 @@ fig5 = b_utils.plot_cluster_wav_mags(proj, labels, 11, features, frequencies, wa
 
 ###
 # FOR SYNERGIES: Calculate and plot the time series of each channel, the frame 
-# of each keypress, the onset and offset of each keypress; calculate and plot 
-# each channel to a normalised frame; calculate integrals of each channel;
-# calculate and plot the mean and 95% CI of all channels over all occurrences
-# of the synergy of interest
+# of each keypress, the onset and offset of each keypress; calculate integrals
+# of each channel; calculate and plot the mean and 95% CI of all channels over
+# all occurrences of the synergy of interest
 ###
 
 channels = ['Little', 'Ring', 'Middle', 'Index']
@@ -552,7 +550,7 @@ plt.show()
 #%%
 
 # Process and plot time series for additional occurrences
-y_values_full, positive_full = process_y_values(tracking_filtered)
+y_values_full, *_ = process_y_values(tracking_filtered)
 
 similar_segment_indices = find_similar_series(y_values_syn, y_values_full,
             syn_frame_start, syn_frame_end, num_segments=10, dist_threshold=800)
@@ -720,41 +718,127 @@ plt.show()
 
 #%%
 
-targetSequence = [4,1,3,2,4]
+###
+# Import, parse, and analyse PsyToolkit .data.txt files for correct keypresses
+# per second over trial, micro-online and -offline periods
+###
 
-# Function to analyse the response stream
+# Function to score sequence matches in a stream
 def patternDetect(stream, targetSequence=[4,1,3,2,4]):
-  # If stream shorter than targetSequence, return zero score
-  if  len(stream)<len(targetSequence):
-    print('Issue with this stream - score is zero')
-    return 0
-  # Past this point, len(stream) >= len(targetSequence)
-  # Convert lists to string, numpy arrays
-  trialSeqString = ''.join(str(k) for k in list(stream)) #string version of stream
-  targetSequence = np.array(targetSequence)
-  trialSequence = np.array(stream)
+    # Extend the target sequence to account for circularity.
+    extended_target_sequence = targetSequence + [targetSequence[0]]
+    # Generate pairwise tuples for the target sequence.
+    target_pairs = [(extended_target_sequence[i], extended_target_sequence[i+1]) for i in range(len(targetSequence))]
+    
+    # Generate pairwise tuples for the stream.
+    stream_pairs = [(stream[i], stream[i+1]) for i in range(len(stream)-1)]
+    
+    # Count matching pairs.
+    matching_pairs_count = sum(1 for pair in stream_pairs if pair in target_pairs)
+    
+    # Initial score is based on matching pairs.
+    score = matching_pairs_count
+    
+    # Check for interruptions and adjust score. First, identify segments of 
+    # stream that are consecutive matches in the target sequence.
+    consecutive_matches = [pair in target_pairs for pair in stream_pairs]
+    
+    # If there's an interruption (False between Trues), adjust the score.
+    if any(consecutive_matches[i] == False and consecutive_matches[i+1] == True for i in range(len(consecutive_matches)-1)):
+        score += 2  # Adjust for interruptions.
+    else:
+        score += 1  # Always add 1 for the starting element of the sequence.
+    
+    return score
 
-  targSeqSize = len(targetSequence)
-  
-  # Start pattern detector
-  checkKPressMat = np.tile(trialSequence,(targSeqSize,1)) # Replicate Key Press sequence
-  for i in range(targSeqSize): # i for each possible shift of target sequence
-    shiftedTargSeq = np.roll(targetSequence,-i) # Shift of target sequence
-    shiftedTargSeqString = ''.join(str(k) for k in shiftedTargSeq) # String version of shifted target sequence
+# Test the function with some scenarios.
+# print(patternDetect([1,3,2,4]))             # Expecting 5
+# print(patternDetect([4,1,3,2,4,4]))         # Expecting 6
+# print(patternDetect([4,1,1,1,1,1]))         # Expecting 2
+# print(patternDetect([4,1,1,1,1,1,4,1,3,2])) # Expecting 6
+# print(patternDetect([4,1,3,2,4,4,1,3,2]))   # Expecting 9
 
-    # List that contant starting index of every nonoverlapping match between stream and the shifted target, possibly empty list
-    iCorrectSequence = [k.start(0) for k in re.finditer(shiftedTargSeqString,trialSeqString)] 
+# Function to calculate score within a time window
+def calculate_correct_keypresses_within_window(events, timestamps, window_start, window_end, target_sequence):
+    slice_events = [event for event, timestamp in zip(events, timestamps) if window_start <= timestamp <= window_end]
+    return patternDetect(slice_events, target_sequence)
 
-    for j in iCorrectSequence: # For each starting index
-      checkKPressMat[i,j:j + targSeqSize] = 0 # In checkKPressMat replace match with zeros
-  
-  trialScore = ((checkKPressMat == 0).sum(axis=0) > 0).sum() # Total number of columns of checkKPressMat with at least one zero
-  return trialScore
+# Function to analyse scoring in trial start/end windows
+def analyse_trial_windows(events, timestamps, target_sequence):
+    start_ts, end_ts = timestamps[0], timestamps[-1]
+    first_window_end = min(start_ts + 1000, end_ts)
+    last_window_start = max(end_ts - 1000, start_ts)
+    first_window_correct = calculate_correct_keypresses_within_window(events, timestamps, start_ts, first_window_end, target_sequence)
+    last_window_correct = calculate_correct_keypresses_within_window(events, timestamps, last_window_start, end_ts, target_sequence)
+    return first_window_correct, last_window_correct
 
-print(patternDetect([4,4,1,3,2,4]))
+# Function to parse stream data and analyse it
+def parse_and_analyse_data(file_path, target_sequence):
+    parsed_data = {
+        'Trial': [], 'KeyID': [], 'EventType': [], 'TimeStamp': [], 'GlobalTimeStamp': [],
+        'CorrectKeyPressesPerTrial': [], 'MicroOnline': [], 'MicroOffline': []
+    }
+    trial_events = {}
+    trial_first_last_timestamps = {}
+
+    ignore_first_row = True
+    with open(file_path, 'r') as file:
+        for line in file:
+            if ignore_first_row:
+                ignore_first_row = False
+                continue  # Skip the first row
+            parts = line.strip().split()
+            if len(parts) < 5 or parts[:5] == ['0', '0', '99', '0', '0']:
+                continue  # Skip lines not matching expected format
+            trial_number, event_count, event_type, timestamp, globaltime = map(int, parts[:5])
+            if trial_number not in trial_events:
+                trial_events[trial_number] = {'events': [], 'timestamps': [], 'first_line_index': len(parsed_data['Trial'])}
+                trial_first_last_timestamps[trial_number] = {'first': timestamp, 'last': timestamp}
+            else:
+                trial_first_last_timestamps[trial_number]['last'] = timestamp
+
+            trial_events[trial_number]['events'].append(event_type)
+            trial_events[trial_number]['timestamps'].append(timestamp)
+
+            parsed_data['Trial'].append(trial_number)
+            parsed_data['KeyID'].append(event_count)
+            parsed_data['EventType'].append(event_type)
+            parsed_data['TimeStamp'].append(timestamp)
+            parsed_data['GlobalTimeStamp'].append(globaltime)
+            parsed_data['CorrectKeyPressesPerTrial'].append(None)  # Placeholder
+            parsed_data['MicroOnline'].append(None)  # Placeholder
+            parsed_data['MicroOffline'].append(None)  # Placeholder
+
+    # Calculate metrics
+    for trial_number, data in trial_events.items():
+        events, timestamps = data['events'], data['timestamps']
+        first_window_correct, last_window_correct = analyse_trial_windows(events, timestamps, target_sequence)
+        correct_per_trial = patternDetect(events, target_sequence)
+        parsed_data['CorrectKeyPressesPerTrial'][data['first_line_index']] = correct_per_trial / 10  # Assuming 10 seconds per trial
+
+        micro_online = last_window_correct - first_window_correct
+        parsed_data['MicroOnline'][data['first_line_index']] = micro_online  # Store only once per trial at the first row
+
+        if trial_number + 1 in trial_first_last_timestamps:
+            next_trial_data = trial_events[trial_number + 1]
+            next_first_window_correct, _ = analyse_trial_windows(next_trial_data['events'], next_trial_data['timestamps'], target_sequence)
+            micro_offline = next_first_window_correct - last_window_correct
+            parsed_data['MicroOffline'][trial_events[trial_number + 1]['first_line_index']] = micro_offline  # Store at the first row of the next trial
+
+    # Convert the structured data into a DataFrame
+    return pd.DataFrame(parsed_data)
+
+# Function to write analysis results to CSV
+def write_data_to_csv(dataframe, output_file_path):
+    dataframe.to_csv(output_file_path, index=False)
+
+# Usage
+file_path = '/Users/wi11iamk/Desktop/012.sequenece_task.2021-04-13-1830.data.txt'
+output_file_path = '/Users/wi11iamk/Desktop/012output.csv'
+target_sequence = [4,1,3,2,4]
+dataframe = parse_and_analyse_data(file_path, target_sequence)
+write_data_to_csv(dataframe, output_file_path)
 
 #%%
 
-# TODO Convert Matlab, Psytoolkit .txt file processing and add
-# TODO Convert micro-online and micro-offline code from Matlab to Python and add
 # TODO Create dictionary for participant specific parameters
