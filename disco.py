@@ -45,7 +45,7 @@ for col in range(1, 8, 2):  # Iterate over y-value columns (1, 3, 5, 7)
     # Apply Savitzky-Golay filter
     tracking_filtered[:, col] = savgol_filter(tracking_filtered[:, col], 7, 1)
     
-    # Normalize the filtered y-values
+    # Normalise the filtered y-values
     tracking_filtered[:, col] -= tracking_filtered[0, col]
 
 # Initialise a dictionary to store frames
@@ -723,32 +723,30 @@ plt.show()
 # per second over trial, micro-online and -offline periods
 ###
 
-# Function to score sequence matches in a stream
 def patternDetect(stream, targetSequence=[4,1,3,2,4]):
-    # Extend the target sequence to account for circularity.
-    extended_target_sequence = targetSequence + [targetSequence[0]]
-    # Generate pairwise tuples for the target sequence.
-    target_pairs = [(extended_target_sequence[i], extended_target_sequence[i+1]) for i in range(len(targetSequence))]
+    # Generate pairwise tuples for the target sequence, including a 'ghost' element for circularity
+    target_pairs = [(targetSequence[i], targetSequence[(i+1) % len(targetSequence)]) for i in range(len(targetSequence))]
     
-    # Generate pairwise tuples for the stream.
+    # Generate pairwise tuples for the stream
     stream_pairs = [(stream[i], stream[i+1]) for i in range(len(stream)-1)]
     
-    # Count matching pairs.
+    # Count matching pairs
     matching_pairs_count = sum(1 for pair in stream_pairs if pair in target_pairs)
     
-    # Initial score is based on matching pairs.
+    # Initialize score based on matching pairs count
     score = matching_pairs_count
     
-    # Check for interruptions and adjust score. First, identify segments of 
-    # stream that are consecutive matches in the target sequence.
+    # Identify segments of consecutive matches in the target sequence within the stream
     consecutive_matches = [pair in target_pairs for pair in stream_pairs]
     
-    # If there's an interruption (False between Trues), adjust the score.
-    if any(consecutive_matches[i] == False and consecutive_matches[i+1] == True for i in range(len(consecutive_matches)-1)):
-        score += 2  # Adjust for interruptions.
-    else:
-        score += 1  # Always add 1 for the starting element of the sequence.
+    # Check for the start of a sequence or interruptions
+    if consecutive_matches:
+        score += 1  # Add for the start of the sequence
     
+    # Adjust for interruptions, considering each False followed by True as the start of a new sequence segment
+    interruptions = sum(1 for i in range(len(consecutive_matches)-1) if not consecutive_matches[i] and consecutive_matches[i+1])
+    score += interruptions
+
     return score
 
 # Test the function with some scenarios.
@@ -757,6 +755,7 @@ def patternDetect(stream, targetSequence=[4,1,3,2,4]):
 # print(patternDetect([4,1,1,1,1,1]))         # Expecting 2
 # print(patternDetect([4,1,1,1,1,1,4,1,3,2])) # Expecting 6
 # print(patternDetect([4,1,3,2,4,4,1,3,2]))   # Expecting 9
+# print(patternDetect([4,1,1,4,1,3,4,1]))     # Expecting 7
 
 # Function to calculate score within a time window
 def calculate_correct_keypresses_within_window(events, timestamps, window_start, window_end, target_sequence):
