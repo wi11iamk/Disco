@@ -752,7 +752,7 @@ def patternDetect(stream, targetSequence=[4,1,3,2,4]):
     return score
 
 # Test the function with some scenarios.
-# print(patternDetect([1,3,2,4]))             # Expecting 5
+# print(patternDetect([1,3,2,4,4]))           # Expecting 5
 # print(patternDetect([4,1,3,2,4,4]))         # Expecting 6
 # print(patternDetect([4,1,1,1,1,1]))         # Expecting 2
 # print(patternDetect([4,1,1,1,1,1,4,1,3,2])) # Expecting 6
