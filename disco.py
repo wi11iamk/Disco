@@ -11,7 +11,7 @@ Created on Wed Feb 28 19:55:56 2024
 # Import necessary libraries
 ###
 
-import numpy as np, pandas as pd, umap, umap.plot
+import os, numpy as np, pandas as pd, umap, umap.plot
 import matplotlib.pyplot as plt, seaborn as sns
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
@@ -733,7 +733,7 @@ def patternDetect(stream, targetSequence=[4,1,3,2,4]):
     # Count matching pairs
     matching_pairs_count = sum(1 for pair in stream_pairs if pair in target_pairs)
     
-    # Initialize score based on matching pairs count
+    # Initialise score based on matching pairs count
     score = matching_pairs_count
     
     # Identify segments of consecutive matches in the target sequence within the stream
@@ -831,12 +831,57 @@ def parse_and_analyse_data(file_path, target_sequence):
 def write_data_to_csv(dataframe, output_file_path):
     dataframe.to_csv(output_file_path, index=False)
 
+# Function to iterate analysis over all participants; store data and plot
+def process_all_data_files(input_folder, output_folder, target_sequence):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    
+    all_correct_presses = []
+
+    for filename in os.listdir(input_folder):
+        if filename.endswith(".data.txt"):
+            file_path = os.path.join(input_folder, filename)
+            output_file_name = filename[:3] + '.csv'
+            output_file_path = os.path.join(output_folder, output_file_name)
+            
+            dataframe = parse_and_analyse_data(file_path, target_sequence)
+            all_correct_presses.append(dataframe['CorrectKeyPressesPerTrial'].dropna().tolist())
+            write_data_to_csv(dataframe, output_file_path)
+    
+    # Flatten the list of lists for each trial across all participants
+    trial_means = []
+    trial_sems = []
+    trials_data = []
+
+    for i, trial in enumerate(zip(*all_correct_presses)):
+        trial_array = np.array(trial)
+        trial_mean = np.mean(trial_array)
+        trial_sem = np.std(trial_array) / np.sqrt(len(trial_array))
+        trial_means.append(trial_mean)
+        trial_sems.append(trial_sem)
+        trials_data.extend([{'Trial Number': i+1, 'Correct Key Presses per Trial': value} for value in trial])
+
+    # Convert collected data into a DataFrame for visualisation
+    trial_df = pd.DataFrame(trials_data)
+
+    # Plot
+    sns.set_style("ticks")
+    plt.figure(figsize=(10, 5))
+    sns.lineplot(data=trial_df, x='Trial Number', y='Correct Key Presses per Trial', estimator=np.mean, errorbar='se')
+    sns.despine()
+    plt.title('Mean Correct Key Presses per Trial with SEM')
+    plt.xlabel('Trial Number')
+    plt.ylabel('Correct Key Presses per Trial')
+    plt.xticks(range(1, len(trial_means) + 1))  # Assuming trial number starts from 1
+    plt.show()
+    
+    return trials_data
+
 # Usage
-file_path = '/Users/wi11iamk/Desktop/012.sequenece_task.2021-04-13-1830.data.txt'
-output_file_path = '/Users/wi11iamk/Desktop/012output.csv'
+input_folder = '/Users/wi11iamk/Desktop/ptkTest'
+output_folder = '/Users/wi11iamk/Desktop/csvOutput'
 target_sequence = [4,1,3,2,4]
-dataframe = parse_and_analyse_data(file_path, target_sequence)
-write_data_to_csv(dataframe, output_file_path)
+trials_data = process_all_data_files(input_folder, output_folder, target_sequence)
 
 #%%
 
