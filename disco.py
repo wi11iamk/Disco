@@ -720,7 +720,7 @@ plt.show()
 
 ###
 # Import, parse, and analyse PsyToolkit .data.txt files for correct keypresses
-# per second over trial, micro-online and -offline periods; return .csv file
+# per second over trial, micro-online and -offline periods
 ###
 
 def patternDetect(stream, targetSequence=[4,1,3,2,4]):
@@ -771,11 +771,21 @@ def analyse_trial_windows(events, timestamps, target_sequence):
     last_window_correct = calculate_correct_keypresses_within_window(events, timestamps, last_window_start, end_ts, target_sequence)
     return first_window_correct, last_window_correct
 
+# Function to remove outliers from plots
+def remove_outliers_iqr(data):
+    q1 = np.percentile(data, 25)
+    q3 = np.percentile(data, 75)
+    iqr = q3 - q1
+    lower_bound = q1 - 1 * iqr
+    upper_bound = q3 + 1 * iqr
+    filtered = [e for e in data if lower_bound <= e <= upper_bound]
+    return filtered
+
 # Function to parse stream data and analyse it
 def parse_and_analyse_data(file_path, target_sequence):
     parsed_data = {
         'Trial': [], 'KeyID': [], 'EventType': [], 'TimeStamp': [], 'GlobalTimeStamp': [],
-        'CorrectKeyPressesPerTrial': [], 'MicroOnline': [], 'MicroOffline': []
+        'CorrectKeyPressesPerS': [], 'KeypressSpeed': [], 'MicroOnline': [], 'MicroOffline': []
     }
     trial_events = {}
     trial_first_last_timestamps = {}
@@ -804,39 +814,57 @@ def parse_and_analyse_data(file_path, target_sequence):
             parsed_data['EventType'].append(event_type)
             parsed_data['TimeStamp'].append(timestamp)
             parsed_data['GlobalTimeStamp'].append(globaltime)
-            parsed_data['CorrectKeyPressesPerTrial'].append(None)  # Placeholder
+            parsed_data['CorrectKeyPressesPerS'].append(None)  # Placeholder
+            parsed_data['KeypressSpeed'].append(None)  # Placeholder
             parsed_data['MicroOnline'].append(None)  # Placeholder
             parsed_data['MicroOffline'].append(None)  # Placeholder
 
+    last_value = None
     # Calculate metrics
     for trial_number, data in trial_events.items():
         events, timestamps = data['events'], data['timestamps']
         first_window_correct, last_window_correct = analyse_trial_windows(events, timestamps, target_sequence)
-        correct_per_trial = patternDetect(events, target_sequence)
-        parsed_data['CorrectKeyPressesPerTrial'][data['first_line_index']] = correct_per_trial / 10  # Assuming 10 seconds per trial
+        
+        # Example multiple readings per trial, simulate or actual implementation as needed
+        correct_per_trial = [patternDetect(events, target_sequence) / 10 for _ in range(10)]
+        correct_per_trial_filtered = remove_outliers_iqr(correct_per_trial)  # Outlier removal
+        mean_correct_per_trial = np.mean(correct_per_trial_filtered) if correct_per_trial_filtered else None
 
-        micro_online = last_window_correct - first_window_correct
-        parsed_data['MicroOnline'][data['first_line_index']] = micro_online  # Store only once per trial at the first row
+        parsed_data['CorrectKeyPressesPerS'][data['first_line_index']] = mean_correct_per_trial
+
+        if last_value is not None:
+            delta = mean_correct_per_trial - last_value if mean_correct_per_trial is not None else None
+            parsed_data['KeypressSpeed'][data['first_line_index']] = delta
+
+        last_value = mean_correct_per_trial
+
+        micro_online = (last_window_correct - first_window_correct) / 10
+        parsed_data['MicroOnline'][data['first_line_index']] = micro_online
 
         if trial_number + 1 in trial_first_last_timestamps:
             next_trial_data = trial_events[trial_number + 1]
             next_first_window_correct, _ = analyse_trial_windows(next_trial_data['events'], next_trial_data['timestamps'], target_sequence)
-            micro_offline = next_first_window_correct - last_window_correct
-            parsed_data['MicroOffline'][trial_events[trial_number + 1]['first_line_index']] = micro_offline  # Store at the first row of the next trial
+            micro_offline = (next_first_window_correct - last_window_correct) / 10
+            parsed_data['MicroOffline'][trial_events[trial_number + 1]['first_line_index']] = micro_offline
 
-    # Convert the structured data into a DataFrame
     return pd.DataFrame(parsed_data)
 
 # Function to write analysis results to CSV
 def write_data_to_csv(dataframe, output_file_path):
     dataframe.to_csv(output_file_path, index=False)
 
-# Function to iterate analysis over all participants; store data and plot
+# Function to iterate analysis over all participants, store data and plot
 def process_all_data_files(input_folder, output_folder, target_sequence):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     
     all_correct_presses = []
+    metrics_summary = {
+        'Participant': [],
+        'KeypressSpeed': [],
+        'MicroOnline': [],
+        'MicroOffline': []
+    }
 
     for filename in os.listdir(input_folder):
         if filename.endswith(".data.txt"):
@@ -845,9 +873,16 @@ def process_all_data_files(input_folder, output_folder, target_sequence):
             output_file_path = os.path.join(output_folder, output_file_name)
             
             dataframe = parse_and_analyse_data(file_path, target_sequence)
-            all_correct_presses.append(dataframe['CorrectKeyPressesPerTrial'].dropna().tolist())
+            all_correct_presses.append(dataframe['CorrectKeyPressesPerS'].dropna().tolist())
             write_data_to_csv(dataframe, output_file_path)
-    
+
+            # Collecting sums for each metric
+            participant_id = filename[:3]
+            metrics_summary['Participant'].append(participant_id)
+            metrics_summary['KeypressSpeed'].append(dataframe['KeypressSpeed'].sum())
+            metrics_summary['MicroOnline'].append(dataframe['MicroOnline'].sum())
+            metrics_summary['MicroOffline'].append(dataframe['MicroOffline'].sum())
+
     # Flatten the list of lists for each trial across all participants
     trial_means = []
     trial_sems = []
@@ -859,30 +894,49 @@ def process_all_data_files(input_folder, output_folder, target_sequence):
         trial_sem = np.std(trial_array) / np.sqrt(len(trial_array))
         trial_means.append(trial_mean)
         trial_sems.append(trial_sem)
-        trials_data.extend([{'Trial Number': i+1, 'Correct Key Presses per Trial': value} for value in trial])
+        trials_data.extend([{'Trial Number': i+1, 'Correct Key Presses per S': value} for value in trial])
 
     # Convert collected data into a DataFrame for visualisation
     trial_df = pd.DataFrame(trials_data)
 
-    # Plot
+    # Plot Correct Key Presses per S
     sns.set_style("ticks")
     plt.figure(figsize=(10, 5))
-    sns.lineplot(data=trial_df, x='Trial Number', y='Correct Key Presses per Trial', estimator=np.mean, errorbar='se')
+    sns.lineplot(data=trial_df, x='Trial Number', y='Correct Key Presses per S', estimator=np.mean, errorbar='se')
     sns.despine()
-    plt.title('Mean Correct Key Presses per Trial with SEM')
+    plt.title('Mean Correct Key Presses per S with SEM')
     plt.xlabel('Trial Number')
-    plt.ylabel('Correct Key Presses per Trial')
+    plt.ylabel('Correct Key Presses per S')
     plt.xticks(range(1, len(trial_means) + 1))  # Assuming trial number starts from 1
     plt.show()
+
+    # Convert collected data into a DataFrame for visualisation
+    metrics_df = pd.DataFrame(metrics_summary)
+
+    # Plot the sum of micro-online, -offline, and total keypress speed deltas
+    fig, axes = plt.subplots(1, 3, figsize=(12, 6), sharey=True)
+    metrics_to_plot = ['KeypressSpeed', 'MicroOnline', 'MicroOffline']
+    for i, metric in enumerate(metrics_to_plot):
+        sns.barplot(x=[metric] * len(metrics_df), y=metrics_df[metric], estimator=np.mean, errorbar='sd', color='red', alpha=0.6, ax=axes[i])
+        sns.stripplot(x=[metric] * len(metrics_df), y=metrics_df[metric], color='blue', jitter=True, ax=axes[i])
+        axes[i].set_title(f'Sum of {metric} deltas per Participant')
+        axes[i].set_xlabel('')
+        if i > 0:
+            axes[i].set_ylabel('')  # Remove y-label for subplots
+        else:
+            axes[i].set_ylabel('Sum of deltas')
+        
+    plt.tight_layout()
+    sns.despine()
+    plt.show()
     
-    return trials_data
+    return trials_data, metrics_summary
 
 # Usage
-input_folder = '/Users/wi11iamk/Desktop/ptkTest'
+input_folder = '/Users/wi11iamk/Desktop/D1'
 output_folder = '/Users/wi11iamk/Desktop/csvOutput'
 target_sequence = [4,1,3,2,4]
-trials_data = process_all_data_files(input_folder, output_folder, target_sequence)
-
+process_all_data_files(input_folder, output_folder, target_sequence)
 #%%
 
 # TODO Create dictionary for participant specific parameters
