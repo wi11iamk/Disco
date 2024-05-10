@@ -11,13 +11,16 @@ Created on Wed Feb 28 19:55:56 2024
 # Import necessary libraries
 ###
 
-import os, numpy as np, pandas as pd, umap, umap.plot
+import os, csv
+import numpy as np, pandas as pd
+import umap, umap.plot
 import matplotlib.pyplot as plt, seaborn as sns
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 from mycolours import custom_colour_list
-from hubdt import data_loading, behav_session_params, wavelets, t_sne, hdb_clustering, b_utils
-from scipy.stats import gaussian_kde, ks_2samp, sem, t
+from parameters import participants
+from hubdt import data_loading, wavelets, t_sne, hdb_clustering, b_utils
+from scipy.stats import gaussian_kde, sem, t
 from scipy.integrate import simpson
 from scipy.signal import find_peaks, savgol_filter
 from scipy.spatial.distance import jensenshannon
@@ -26,18 +29,22 @@ from fastdtw import fastdtw
 #%%
 
 ###
-# Initialise the HUB-DT session; import all DLC features and tracking data;
-# apply Savitzky-Golay filter to each 'y' channel and normalise each first 
-# frame to 0; initialise dictionary to store frame values for each trial 
+# Import all DLC features and tracking data; apply Savitzky-Golay filter to
+# each 'y' channel and normalise each first frame to 0; initialise dictionary
+# to store frame values for each trial 
 ###
 
-mysesh = behav_session_params.load_session_params ('Mine')
+pt = '016' # Choose the participant number
+params = participants[pt] # Extract parameters for the specified participant
 
-features = data_loading.dlc_get_feats (mysesh)
+# Load DLC h5 file, extract features and tracking data
+h5 = data_loading.load_dlc_hdf(f'./data/{pt}_D1_NR.h5')
+h5 = data_loading.dlc_remove_scorer(h5)
+features = list(h5.T.index.get_level_values(0).unique())
 
-del features[4:7] # Delete features
+del features[4:7] # Delete extra features should they exist
 
-tracking = data_loading.load_tracking (mysesh, dlc=True, feats=features)
+tracking = data_loading.load_tracking (pt=pt, dlc=True, feats=features)
 
 # Apply Savitzky-Golay filter and normalise first frames to 0
 tracking_filtered = tracking.copy() # Create copy of tracking to filter
@@ -47,7 +54,7 @@ for col in range(1, 8, 2):  # Iterate over y-value columns (1, 3, 5, 7)
     
     # Normalise the filtered y-values
     tracking_filtered[:, col] -= tracking_filtered[0, col]
-
+    
 # Initialise a dictionary to store frames
 trial = {}
 # Total number of trials
@@ -77,7 +84,7 @@ proj = np.transpose(proj)
 # Fit wavelet projection into two dimensional embedded space (UMAP); plot
 ###
 
-mapper = umap.UMAP(n_neighbors=40, n_components=2, min_dist=0.2).fit(proj)
+mapper = umap.UMAP(n_neighbors=35, n_components=2, min_dist=0).fit(proj)
 
 embed = mapper.embedding_
 
@@ -92,8 +99,7 @@ umap.plot.diagnostic(mapper, diagnostic_type='pca')
 ###
 # Calculate and plot a gaussian KDE over embedded data; calculate a list of
 # slices from the embedding and plot each as an overlay atop the gaussian KDE;
-# calculate the Jensen-Shannon divergence and Kolmogorov-Smirnov statistic for
-# each slice as a probability vector or data sample, respectively
+# calculate the JS divergence between each slice as probability vectors
 ###
 
 # Function to calculate density on the fixed grid
@@ -113,11 +119,10 @@ entire_data_density, x_grid, y_grid = t_sne.calc_density(embed)
 grid_coords = np.vstack([x_grid.ravel(), y_grid.ravel()])
 
 # Define slices (you may use an empty tuple for the entire dataset)
-slices = [trial['1'],trial['5'],trial['12'],trial['35']]
+slices = [trial['1'],trial['12'],trial['34']]
 
-# Initialise container for normalised probability vectors and slice data segments
+# Initialise container for normalised probability vectors
 probability_vectors = []
-slice_data_segments = []
 
 # Prepare the plotting area based on the number of slices with actual data
 fig, axes = plt.subplots(1, max(len(slices), 1), figsize=((len(slices)*6), 4)) if len(slices) > 1 else plt.subplots(figsize=(6, 4))
@@ -132,7 +137,6 @@ for i, sl in enumerate(slices):
     fig.colorbar(pcm, ax=ax, label='Density')
     if sl:
         slice_data = embed[sl[0]:sl[1], :]
-        slice_data_segments.append(slice_data)  # Append the slice data for KS tests
         slice_density = calc_density_on_fixed_grid(slice_data, grid_coords)
         slice_vector = normalise_grid(slice_density)
         probability_vectors.append(slice_vector)  # Append the normalised probability vector
@@ -148,31 +152,41 @@ for i, sl in enumerate(slices):
 plt.tight_layout()
 plt.show()
 
-# Ensure probability vectors sum to 1 within tolerance
-for i, vector in enumerate(probability_vectors):
-    if np.isclose(np.sum(vector), 1.0, atol=1e-8):
-        print(f"Vector {i+1} sums to 1.0 within tolerance.")
-    else:
-        print(f"Vector {i+1} does not sum to 1.0; sum is {np.sum(vector)}.")
-        
-# Calculate pairwise JS divergences between listed probability_vectors
-for i in range(len(probability_vectors) - 1):
-    js_divergence = jensenshannon(probability_vectors[i], probability_vectors[i + 1])
-    print(f"Jansen-Shannon Divergence between Vector {i+1} and Vector {i + 2}: {js_divergence}")
+js_data = 'js_divergence_data.csv'
 
-# Calculate pairwise KS statistics between listed slice_data_segments
-for i in range(len(slice_data_segments) - 1):
-    # Perform KS test between consecutive slice_data segments
-    ks_stat, p_value = ks_2samp(slice_data_segments[i].ravel(), slice_data_segments[i + 1].ravel())
-    
-    # Determine whether to reject the null hypothesis
-    if p_value <= 0.05:
-        decision = "reject the null hypothesis (the distributions are different)"
-    else:
-        decision = "fail to reject the null hypothesis (no significant difference between the distributions)"
-    
-    # Print the results, including the decision
-    print(f"KS Statistic between Slice {i+1} and Slice {i+2}: {ks_stat}, P-value: {p_value}. We {decision}.")
+# Function to calculate pairwise JS divergences between listed probability vectors
+def calculate_js_divergences(probability_vectors):
+    js_divergences = []
+    for i in range(len(probability_vectors) - 1):
+        divergence = jensenshannon(probability_vectors[i], probability_vectors[i + 1])
+        js_divergences.append(divergence)
+        print(f"Jansen-Shannon Divergence between Vector {i+1} and Vector {i + 2}: {divergence}")
+
+    return js_divergences
+
+# Calculate pairwise JS divergences between listed probability vectors
+js_divergences = calculate_js_divergences(probability_vectors)
+
+# Read or initialize the CSV file as a DataFrame
+if os.path.exists(js_data):
+    df = pd.read_csv(js_data)
+else:
+    df = pd.DataFrame(columns=['Participant'] + [f'JS_Divergence_{i+1}' for i in range(len(js_divergences))])
+
+# Check if the participant already exists
+if pt in df['Participant'].values:
+    # Update the existing row
+    df.loc[df['Participant'] == pt, [f'JS_Divergence_{i+1}' for i in range(len(js_divergences))]] = js_divergences
+else:
+    # Add a new row for the new participant
+    new_data = {'Participant': pt, **{f'JS_Divergence_{i+1}': d for i, d in enumerate(js_divergences)}}
+    new_row = pd.DataFrame(new_data, index=[0])
+    # Ensure there are no completely NA columns
+    new_row = new_row.dropna(axis=1, how='all')
+    df = pd.concat([df, new_row], ignore_index=True)
+
+# Write the updated DataFrame back to CSV
+df.to_csv(js_data, index=False)
 
 #%%
 
@@ -181,7 +195,7 @@ for i in range(len(slice_data_segments) - 1):
 # data; plot cluster labels atop embedded data
 ###
 
-clusterobj = hdb_clustering.hdb_scan(embed, 150, 15, selection='leaf', cluster_selection_epsilon=0.13)
+clusterobj = hdb_clustering.hdb_scan(embed, params['min_cluster_size'], 20, selection='leaf', cluster_selection_epsilon=params['cluster_selection_epsilon'])
 
 labels = clusterobj.labels_
 
@@ -258,12 +272,14 @@ def process_counts(continuous_counts):
         counts = data['counts']
         start_frames = data['start_frames']
         mean_count = np.mean(counts)
-        first_one = start_frames[:1]
+        firsts = start_frames[:5]
+        lasts = start_frames[-5:]
 
         data['stats'] = (
             mean_count,  # Mean length in frames
-            *first_one,  # The first frame of the first occurrence
-            len(counts),  # Total number of occurrences
+            *firsts, # The first frame of the first five occurrences
+            *lasts, # The first frame of the last five occurrences
+            len(counts), # Total number of occurrences
             (sum(counts) / total_all_frames) * 100  # % of total frames
         )
 
@@ -272,8 +288,8 @@ a_labels_data = calculate_label_data(a_labels, threshold=5)
 #%%
 
 ###
-# FOR TRIALS: Calculate the distribution of labels within each trial and plot
-# with and without noise
+# Calculate the distribution of labels within each trial and plot with and
+# without noise
 ###
 
 normalised_trial_counts = []
@@ -350,19 +366,75 @@ plt.show()
 #%%
 
 ###
-# Consult the a_labels_data list for information about each synergy; determine
-# your synergy of interest; enter start and end frames of the synergy; 
-# timeseries calculations are based on this range
+# Generate a CSV file to store label specific data
 ###
 
-syn_frame_start = 25248
-syn_frame_end = syn_frame_start+120
+labels_info = {}
+total_trials = 36
+
+# Initialize label info structure
+for i, trial_counts in enumerate(normalised_trial_counts_including_noise):
+    for label in trial_counts:
+        if label >= 0:  # Check to skip the noise label
+            if label not in labels_info:
+                labels_info[label] = {
+                    'key_press_count': 0,
+                    'normalised_hz': 0,
+                    'overlap': 0,
+                    'trials': [0] * total_trials  # 36 trials
+                }
+            # Mark presence of the label in this specific trial
+            labels_info[label]['trials'][i] = 1 if label in trial_counts else 0
+
+# Ensure the base directory exists
+base_path = f'./data/{pt}/'
+os.makedirs(base_path, exist_ok=True)  # Create base path if not exists
+
+# Create directories for each label
+for label in labels_info:
+    label_dir = os.path.join(base_path, f'Label_{label:02d}')
+    os.makedirs(label_dir, exist_ok=True)  # Create a directory for each label
+
+# Define all the fieldnames including 'TnW' columns for normalized weights
+fieldnames = ['label', 'key_press_count', 'normalised_hz', 'overlap']
+for i in range(total_trials):
+    fieldnames += [f'T{i+1}', f'T{i+1}w']
+
+# Write to CSV with additional weight columns
+filename = f'{base_path}{pt}_label_data.csv'
+with open(filename, 'w', newline='') as csvfile:
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    writer.writeheader()
+    for label, info in labels_info.items():
+        if label >= 0:  # Ensure noise label is not written
+            row_data = {
+                'label': label,
+                'key_press_count': info['key_press_count'],
+                'normalised_hz': info['normalised_hz'],
+                'overlap': info['overlap'],
+            }
+            # Include trial presence and weight data
+            for i in range(total_trials):
+                presence_key = f'T{i+1}'
+                weight_key = f'T{i+1}w'
+                row_data[presence_key] = info['trials'][i]
+                # Retrieve the normalized weight for this label in the current trial and convert to percentage
+                row_data[weight_key] = normalised_trial_counts_including_noise[i].get(label, 0) * 100  # Convert to percentage
+            writer.writerow(row_data)
+#%%
+
+###
+# STOP HERE. Consult the a_labels_data list for information about each synergy;
+# determine your synergy of interest; enter start and end frames of your
+# synergy; timeseries and kinematics calculations are based on this range
+###
+
+syn_frame_start = 4721
+syn_frame_end = syn_frame_start+15
 
 fig3 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_grid, y_grid)
 
-#fig4 = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabilities, compare_to=True, comp_label=8)
-
-fig5 = b_utils.plot_cluster_wav_mags(proj, labels, 11, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+fig4, cluster = b_utils.plot_cluster_wav_mags(proj, labels, 11, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
 
 #%%
 
@@ -374,7 +446,7 @@ fig5 = b_utils.plot_cluster_wav_mags(proj, labels, 11, features, frequencies, wa
 ###
 
 channels = ['Little', 'Ring', 'Middle', 'Index']
-colors = sns.color_palette(["#FF6B6B","#FFD93D","#6BCB77","#4D96FF"])
+colors = sns.color_palette(["#A3FFD6","#7BC9FF","#8576FF","#1C1678"])
 data = tracking_filtered[syn_frame_start:syn_frame_end, :] # Set data range
 
 # Function to calculate the Euclidean distance between two multivariate data points
@@ -400,7 +472,7 @@ def process_y_values(data):
     return y_values, y_values_positive
 
 # Function to plot time series and detect key events
-def time_series_events(ax, x_range, y_values, channels, colors, y_threshold=10, plot=True):
+def time_series_events(ax, x_range, y_values, channels, colors, y_threshold=params['y_threshold'], plot=True):
     total_peaks_across_channels = 0
     onset_offset_data = {channel: [] for channel in channels}
     area_under_curve = []
@@ -434,7 +506,7 @@ def time_series_events(ax, x_range, y_values, channels, colors, y_threshold=10, 
     if plot:
         ax.legend()
 
-    return total_peaks_across_channels, onset_offset_data, area_under_curve
+    return total_peaks_across_channels, onset_offset_data, area_under_curve, y_threshold
 
 # Function to identify segments within a full dataset that are similar to a target time series using Dynamic Time Warping (DTW)
 def find_similar_series(y_values, y_values_full, syn_frame_start, syn_frame_end, num_segments=4, dist_threshold=None):
@@ -514,8 +586,10 @@ y_values_syn, y_values_positive = process_y_values(data)
 x_range = np.arange(syn_frame_start, syn_frame_end)
 
 fig, ax = plt.subplots(figsize=(14, 6))
-total_peaks_across_channels, onset_offset_data, area_under_curve = time_series_events(ax, x_range, y_values_syn, channels, colors)
+
+total_peaks_across_channels, onset_offset_data, area_under_curve, y_threshold = time_series_events(ax, x_range, y_values_syn, channels, colors)
 normalised_frequency_hz = normalise_peaks_to_hz(total_peaks_across_channels, syn_frame_end - syn_frame_start + 1)
+
 ax.set_title('Time Series of Channels with Detected Keypresses')
 ax.set_xlabel('Frame Index')
 ax.set_ylabel('Y Position')
@@ -547,13 +621,13 @@ plt.ylabel('Area Under Curve')
 plt.legend(handles[::-1], channels[::-1]) # Invert legend handles for clarity
 plt.show()
 
-#%%
-
 # Process and plot time series for additional occurrences
 y_values_full, *_ = process_y_values(tracking_filtered)
 
+#%%
+
 similar_segment_indices = find_similar_series(y_values_syn, y_values_full,
-            syn_frame_start, syn_frame_end, num_segments=10, dist_threshold=800)
+            syn_frame_start, syn_frame_end, num_segments=10, dist_threshold=1000)
 
 plot_similar_series(y_values_full, y_values_syn, similar_segment_indices, 
             channels, colors)
@@ -561,8 +635,8 @@ plot_similar_series(y_values_full, y_values_syn, similar_segment_indices,
 #%%
 
 ###
-# FOR SYNERGIES: Calculate and plot average velocity and acceleration for each
-# channel; calculate and plot overlap of movements over all channels
+# Calculate and plot average velocity and acceleration for each channel;
+# calculate and plot overlap of movements over all channels
 ###
 
 # Initialise empty lists to store values
@@ -601,7 +675,7 @@ def calculate_overlaps(onset_offset_data):
 
     return total_overlap_frames, all_events_sorted
 
-total_peaks, onset_offset_data, area_under_curve = time_series_events(ax, x_range, y_values_syn, channels, colors, plot=False)  # plot=True if you want to visualise
+total_peaks, onset_offset_data, area_under_curve, y_threshold = time_series_events(ax, x_range, y_values_syn, channels, colors, plot=False)  # plot=True if you want to visualise
 total_overlap_frames, all_events_sorted = calculate_overlaps(onset_offset_data)
 percent_overlap = total_overlap_frames / len(y_values_syn) * 100
 
@@ -661,32 +735,94 @@ print(f"Total percent overlap among channels: {percent_overlap:.2f}%")
 #%%
 
 ###
-# FOR TRIALS: Calculate and plot integrals of each channel per trial; calculate
-# and plot the noralised frequency of peaks in hz per trial 
+# Update the label specific CSV file with metrics for analysed label
 ###
 
-fig, ax = plt.subplots(figsize=(18, 6))
+def update_csv_data(pt, cluster, kp, hz, ol):
+    # Path to the CSV file
+    filename = f'./data/{pt}/{pt}_label_data.csv'
+    
+    # Read the existing CSV into a DataFrame
+    df = pd.read_csv(filename)
+    
+    # Check if the cluster exists in the DataFrame
+    if cluster in df['label'].values:
+        # Update the specific row
+        df.loc[df['label'] == cluster, 'key_press_count'] = total_peaks_across_channels
+        df.loc[df['label'] == cluster, 'normalised_hz'] = normalised_frequency_hz
+        df.loc[df['label'] == cluster, 'overlap'] = percent_overlap
+    else:
+        # Optionally handle the case where the label does not exist
+        print(f"Label {cluster} not found in the CSV.")
+    
+    # Write the DataFrame back to the CSV
+    df.to_csv(filename, index=False)
+    print(f"Data for label {cluster} updated successfully.")
+
+# Sample function calls with hypothetical values
+update_csv_data(pt=pt, cluster=cluster, kp=total_peaks_across_channels, hz=normalised_frequency_hz, ol=percent_overlap)
+
+#%%
+
+###
+# Calculate and plot integrals of each channel per trial; calculate and plot
+# the noralised frequency of peaks in hz per trial 
+###
+
+fig, (ax, ax_vel, ax_acc) = plt.subplots(3, 1, figsize=(18, 18))  # Create three subplots for area, velocity, and acceleration
+
 normalised_freq_per_trial = []
+overlap_per_trial = []
+
+velocities_per_trial = []
+accelerations_per_trial = []
 
 trial_keys = list(trial.keys())  # Get a list of trial keys to use for x-ticks
 x_positions = range(1, len(trial_keys) + 1)  # Generate x positions for each bar
 
 for idx, (trial_number, (trial_start, trial_end)) in enumerate(trial.items(), start=1):
     # Slice the pre-processed y-values for the current trial
+    x_range = np.arange(trial_start, trial_end)
     y_trial = y_values_full[trial_start:trial_end, :]
     y_trial_positive = np.abs(y_trial)
+    
+    total_peaks, onset_offset_data, _, _ = time_series_events(ax, x_range, y_trial, channels, colors, params['y_threshold'], plot=False)
+    total_overlap_frames, _ = calculate_overlaps(onset_offset_data)
+    overlap_per_trial.append(total_overlap_frames / (trial_end - trial_start + 1))
 
     area_under_curve = [simpson(y_trial_positive[:, i]) for i in range(y_trial_positive.shape[1])]
     total_area = sum(area_under_curve)
-    bottom_val = 0  
+    bottom_val = 0
+    
+    # Velocity and acceleration calculations
+    trial_velocities = []
+    trial_accelerations = []
+    for i in range(y_trial.shape[1]):
+        velocities = np.abs(np.diff(y_trial[:, i]))
+        accelerations = np.abs(np.diff(velocities))
+        n_samples = len(velocities)
+        
+        # Calculate standard error of the mean
+        sem_velocity = np.std(velocities) / np.sqrt(n_samples)
+        sem_acceleration = np.std(accelerations) / np.sqrt(n_samples - 1)
+        
+        trial_velocities.append(np.mean(velocities))
+        trial_accelerations.append(np.mean(accelerations))
+        
+        # Plotting SEM bars for velocities and accelerations
+        ax_vel.errorbar(x_positions[idx-1], np.mean(velocities), yerr=sem_velocity, fmt='o', color=colors[i], capsize=5)
+        ax_acc.errorbar(x_positions[idx-1], np.mean(accelerations), yerr=sem_acceleration, fmt='o', color=colors[i], capsize=5)
+    
+    velocities_per_trial.append(trial_velocities)
+    accelerations_per_trial.append(trial_accelerations)
 
     # For each channel, add a segment to the bar at the correct x position
     for i, area in enumerate(area_under_curve):
         ax.bar(x_positions[idx-1], area, bottom=bottom_val, color=colors[i])
         bottom_val += area
 
-    # FrequencyCalculate normalised frequency for the trial
-    total_peaks_across_channels = sum([len(find_peaks(y_trial[:, i], prominence=17)[0]) for i in range(y_trial.shape[1])])
+    # Calculate normalised frequency for the trial
+    total_peaks_across_channels = sum([len(find_peaks(y_trial[:, i], height=y_threshold, prominence=10)[0]) for i in range(y_trial.shape[1])])
     normalised_frequency_hz = normalise_peaks_to_hz(total_peaks_across_channels, trial_end - trial_start + 1)
     normalised_freq_per_trial.append(normalised_frequency_hz)
 
@@ -700,7 +836,14 @@ ax2.plot(x_positions, normalised_freq_per_trial, color='slategrey', marker='o', 
 ax2.set_ylabel('Normalised Frequency (Hz)', color='slategrey')
 ax2.tick_params(axis='y', labelcolor='slategrey')
 
-# Make sure the x-axis aligns for both plots
+# Define the third y-axis for overlap and set a fixed range
+ax3 = ax.twinx()
+ax3.spines['right'].set_position(('outward', 60))
+ax3.plot(x_positions, overlap_per_trial, color='red', marker='x', label='Overlap (frames per second)')
+ax3.set_ylabel('Overlap (frames)', color='red')
+ax3.set_ylim(0, 1)  # Set the y-axis to range from 0 to 1
+
+# Ensure the x-axis aligns for both plots
 ax.set_xticks(x_positions)
 ax.set_xticklabels(trial_keys)
 
@@ -709,13 +852,18 @@ ax.set_xlabel('Trial', fontsize=14)
 ax.set_ylabel('Total Area Under Curve', fontsize=14)
 plt.title('Total Activity per Trial with Normalised Frequency', fontsize=16)
 
+ax_vel.set_ylabel('Velocity (mean per trial)')
+ax_vel.set_title('Velocity Analysis', fontsize=16)
+
+ax_acc.set_ylabel('Acceleration (mean per trial)')
+ax_acc.set_title('Acceleration Analysis', fontsize=16)
+
 # Adding legend for the channels, and possibly for the normalised frequency if desired
 legend_elements = [Patch(facecolor=colors[i], edgecolor='white', label=channels[i]) for i in range(len(channels))] + [Line2D([0], [0], color='slategrey', marker='o', label='Normalised Hz')]
 ax.legend(handles=legend_elements[::-1], loc='upper left')
 
 plt.tight_layout()
 plt.show()
-
 #%%
 
 ###
@@ -932,11 +1080,12 @@ def process_all_data_files(input_folder, output_folder, target_sequence):
     
     return trials_data, metrics_summary
 
-# Usage
-input_folder = '/Users/wi11iamk/Desktop/D1'
+# Setup and usage
+input_folder = '/Users/wi11iamk/Desktop/PhD/PsyToolkit/D2'
 output_folder = '/Users/wi11iamk/Desktop/csvOutput'
 target_sequence = [4,1,3,2,4]
 process_all_data_files(input_folder, output_folder, target_sequence)
 #%%
 
-# TODO Create dictionary for participant specific parameters
+# TODO Create dictionary for Micro on- and off-line trial parsing
+# TODO Individual learning curves (faded) amidst the mean curve
