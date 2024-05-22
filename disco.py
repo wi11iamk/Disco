@@ -20,7 +20,7 @@ from matplotlib.lines import Line2D
 from mycolours import custom_colour_list
 from parameters import participants
 from hubdt import data_loading, wavelets, t_sne, hdb_clustering, b_utils
-from scipy.stats import gaussian_kde, sem, t, norm
+from scipy.stats import gaussian_kde, sem, t, norm, linregress
 from scipy.integrate import simpson
 from scipy.signal import find_peaks, savgol_filter
 from scipy.spatial.distance import jensenshannon
@@ -34,7 +34,7 @@ from fastdtw import fastdtw
 ###
 
 pt = '036' # Choose the participant number
-day = 'D2'
+day = 'D1'
 params = participants[pt] # Extract parameters for the specified participant
 
 # Load DLC h5 file, extract features and tracking data
@@ -62,7 +62,7 @@ for col in range(1, 8, 2):  # Iterate over y-value columns (1, 3, 5, 7)
 # days of testing as well as micro on- and offline subdivisions of trials
 ###
     
-# Initialize a dictionary to store frames for each trial
+# Initialise a dictionary to store frames for each trial
 trial = {}
 
 if day == 'D1':
@@ -79,7 +79,7 @@ for i in range(total_trials):
     end_index = (i + 1) * 1200 - 1
     trial[key] = (start_index, end_index)
 
-# Initialize a dictionary to store micro-segments
+# Initialise a dictionary to store micro-segments
 micro = {}
 # Number of frames to consider for each micro-segment
 frames_per_micro = 120
@@ -140,11 +140,11 @@ def normalise_grid(grid):
     normalised = flattened / np.sum(flattened)
     return normalised
 
-# Function to normalize and add smoothing to the probability vector
-def normalize_and_smooth(vector, epsilon=1e-10):
+# Function to normalise and add smoothing to the probability vector
+def normalise_and_smooth(vector, epsilon=1e-10):
     vector = np.array(vector, dtype=np.float64)
     vector = vector + epsilon  # Add a small constant to avoid zero probabilities
-    vector = vector / np.sum(vector)  # Re-normalize the vector
+    vector = vector / np.sum(vector)  # Re-normalise the vector
     return vector
 
 # Calculate a density grid for the entire dataset
@@ -179,7 +179,7 @@ for i, sl in enumerate(slices):
         slice_data = embed[sl[0]:sl[1], :]
         slice_density = calc_density_on_fixed_grid(slice_data, grid_coords)
         slice_vector = normalise_grid(slice_density)
-        slice_vector = normalize_and_smooth(slice_vector)  # Apply smoothing
+        slice_vector = normalise_and_smooth(slice_vector)  # Apply smoothing
         probability_vectors.append(slice_vector)  # Append the normalised probability vector
         
         # Scatter plot for the slice data
@@ -232,7 +232,7 @@ def calculate_js_divergences_and_write(day, pt, probability_vectors, micro_vecto
 
     # Ensure probability vectors sum to 1 within tolerance and apply smoothing
     for i, vector in enumerate(probability_vectors):
-        probability_vectors[i] = normalize_and_smooth(vector)
+        probability_vectors[i] = normalise_and_smooth(vector)
         if np.isclose(np.sum(probability_vectors[i]), 1.0, atol=1e-8):
             print(f"Vector {i+1} sums to 1.0 within tolerance.")
         else:
@@ -248,7 +248,7 @@ def calculate_js_divergences_and_write(day, pt, probability_vectors, micro_vecto
     if day == 'D1':
         # Ensure micro vectors sum to 1 within tolerance and apply smoothing
         for i, vector in enumerate(micro_vectors):
-            micro_vectors[i] = normalize_and_smooth(vector)
+            micro_vectors[i] = normalise_and_smooth(vector)
             if np.isclose(np.sum(micro_vectors[i]), 1.0, atol=1e-8):
                 print(f"Micro Vector {i+1} sums to 1.0 within tolerance.")
             else:
@@ -262,7 +262,7 @@ def calculate_js_divergences_and_write(day, pt, probability_vectors, micro_vecto
 
         # Ensure total vectors sum to 1 within tolerance and apply smoothing
         for i, vector in enumerate(total_vectors):
-            total_vectors[i] = normalize_and_smooth(vector)
+            total_vectors[i] = normalise_and_smooth(vector)
             if np.isclose(np.sum(total_vectors[i]), 1.0, atol=1e-8):
                 print(f"Total Vector {i+1} sums to 1.0 within tolerance.")
             else:
@@ -290,7 +290,7 @@ if day == 'D1':
         slice_data = embed[sl[0]:sl[1], :]
         slice_density = calc_density_on_fixed_grid(slice_data, grid_coords)
         slice_vector = normalise_grid(slice_density)
-        slice_vector = normalize_and_smooth(slice_vector)  # Apply smoothing
+        slice_vector = normalise_and_smooth(slice_vector)  # Apply smoothing
         micro_vectors.append(slice_vector)
 
     # Calculate probability vectors for total_slices
@@ -299,7 +299,7 @@ if day == 'D1':
         slice_data = embed[sl[0]:sl[1], :]
         slice_density = calc_density_on_fixed_grid(slice_data, grid_coords)
         slice_vector = normalise_grid(slice_density)
-        slice_vector = normalize_and_smooth(slice_vector)  # Apply smoothing
+        slice_vector = normalise_and_smooth(slice_vector)  # Apply smoothing
         total_vectors.append(slice_vector)
 
     # Calculate and write JS divergences
@@ -469,13 +469,14 @@ plt.show()
 labels_info = {}
 total_trials = 36
 
-# Initialize label info structure
+# Initialise label info structure
 for i, trial_counts in enumerate(normalised_trial_counts_including_noise):
     for label in trial_counts:
         if label >= 0:  # Check to skip the noise label
             if label not in labels_info:
                 labels_info[label] = {
                     'key_press_count': 0,
+                    'duration_in_ms': 0,
                     'normalised_hz': 0,
                     'overlap': 0,
                     'trials': [0] * total_trials  # 36 trials
@@ -485,15 +486,15 @@ for i, trial_counts in enumerate(normalised_trial_counts_including_noise):
 
 # Ensure the base directory exists
 base_path = f'./data/{day}/{pt}/'
-os.makedirs(base_path, exist_ok=True)  # Create base path if not exists
+os.makedirs(base_path, exist_ok=True)  # Create base path
 
 # Create directories for each label
 for label in labels_info:
     label_dir = os.path.join(base_path, f'Label_{label:02d}')
     os.makedirs(label_dir, exist_ok=True)  # Create a directory for each label
 
-# Define all the fieldnames including 'TnW' columns for normalized weights
-fieldnames = ['label', 'key_press_count', 'normalised_hz', 'overlap']
+# Define all the fieldnames including 'TnW' columns for normalised weights
+fieldnames = ['label', 'key_press_count', 'duration_in_ms', 'normalised_hz', 'overlap']
 for i in range(total_trials):
     fieldnames += [f'T{i+1}', f'T{i+1}w']
 
@@ -507,6 +508,7 @@ with open(filename, 'w', newline='') as csvfile:
             row_data = {
                 'label': label,
                 'key_press_count': info['key_press_count'],
+                'duration_in_ms': info['duration_in_ms'],  # Include duration_in_ms
                 'normalised_hz': info['normalised_hz'],
                 'overlap': info['overlap'],
             }
@@ -515,7 +517,7 @@ with open(filename, 'w', newline='') as csvfile:
                 presence_key = f'T{i+1}'
                 weight_key = f'T{i+1}w'
                 row_data[presence_key] = info['trials'][i]
-                # Retrieve the normalized weight for this label in the current trial and convert to percentage
+                # Retrieve the normalised weight for this label in the current trial and convert to percentage
                 row_data[weight_key] = normalised_trial_counts_including_noise[i].get(label, 0) * 100  # Convert to percentage
             writer.writerow(row_data)
 #%%
@@ -560,7 +562,8 @@ def find_onset_offset(derivative, peak_index, window=15):
 def normalise_peaks_to_hz(total_peaks, frames_in_window, frame_rate=120):
     duration_seconds = frames_in_window / frame_rate
     frequency_hz = total_peaks / duration_seconds
-    return frequency_hz
+    duration_in_ms = duration_seconds * 1000  # Convert seconds to milliseconds
+    return frequency_hz, duration_in_ms
 
 # Function to slice, normalise, and invert y values
 def process_y_values(data):
@@ -685,7 +688,7 @@ x_range = np.arange(syn_frame_start, syn_frame_end)
 fig, ax = plt.subplots(figsize=(14, 6))
 
 total_peaks_across_channels, onset_offset_data, area_under_curve, y_threshold = time_series_events(ax, x_range, y_values_syn, channels, colors)
-normalised_frequency_hz = normalise_peaks_to_hz(total_peaks_across_channels, syn_frame_end - syn_frame_start + 1)
+normalised_frequency_hz, duration_in_ms = normalise_peaks_to_hz(total_peaks_across_channels, syn_frame_end - syn_frame_start + 1)
 
 ax.set_title('Time Series of Channels with Detected Keypresses')
 ax.set_xlabel('Frame Index')
@@ -835,7 +838,7 @@ print(f"Total percent overlap among channels: {percent_overlap:.2f}%")
 # Update the label specific CSV file with metrics for analysed label
 ###
 
-def update_csv_data(pt, cluster, kp, hz, ol):
+def update_csv_data(pt, cluster, kp, dm, hz, ol):
     # Path to the CSV file
     filename = f'./data/{day}/{pt}/{pt}_label_data.csv'
     
@@ -846,6 +849,7 @@ def update_csv_data(pt, cluster, kp, hz, ol):
     if cluster in df['label'].values:
         # Update the specific row
         df.loc[df['label'] == cluster, 'key_press_count'] = total_peaks_across_channels
+        df.loc[df['label'] == cluster, 'duration_in_ms'] = duration_in_ms
         df.loc[df['label'] == cluster, 'normalised_hz'] = normalised_frequency_hz
         df.loc[df['label'] == cluster, 'overlap'] = percent_overlap
     else:
@@ -857,7 +861,7 @@ def update_csv_data(pt, cluster, kp, hz, ol):
     print(f"Data for label {cluster} updated successfully.")
 
 # Sample function calls with hypothetical values
-update_csv_data(pt=pt, cluster=cluster, kp=total_peaks_across_channels, hz=normalised_frequency_hz, ol=percent_overlap)
+update_csv_data(pt=pt, cluster=cluster, kp=total_peaks_across_channels, dm = duration_in_ms, hz=normalised_frequency_hz, ol=percent_overlap)
 
 #%%
 
@@ -1215,7 +1219,7 @@ trial_means, metrics_summary = process_all_data_files(input_folder, output_folde
 ###
 
 def process_and_plot_data(participant_ids, num_trials):
-    metrics = ['key_press_count', 'normalised_hz', 'overlap', 'duration_in_fr']
+    metrics = ['key_press_count', 'duration_in_ms', 'normalised_hz', 'overlap']
     trial_data = {metric: [[] for _ in range(num_trials)] for metric in metrics}
     trial_weights = {metric: [[] for _ in range(num_trials)] for metric in metrics}
     noise_data = [[] for _ in range(num_trials)]  # For storing noise percentages
@@ -1284,9 +1288,31 @@ def process_and_plot_data(participant_ids, num_trials):
     ax.legend()
     plt.show()
 
-# Example call
+    # New figure with 1x3 subplots
+    fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(20, 6), dpi=300)
+    x_data = [np.mean(values) if values else None for values in trial_data['key_press_count']]
+    x_data = [v for v in x_data if v is not None]
+
+    for i, y_metric in enumerate(['duration_in_ms', 'normalised_hz', 'overlap']):
+        ax = axes[i]
+        y_data = [np.mean(values) if values else None for values in trial_data[y_metric]]
+        y_data = [v for v in y_data if v is not None]
+
+        if x_data and y_data:
+            ax.scatter(x_data, y_data, c='blue', label=f'{y_metric} vs key_press_count', s=100)
+            slope, intercept, r_value, p_value, std_err = linregress(x_data, y_data)
+            ax.plot(x_data, np.array(x_data) * slope + intercept, color='red', label='Line of best fit')
+        
+        ax.set_title(f'{y_metric} vs key_press_count')
+        ax.set_xlabel('Weighted Average of key_press_count')
+        ax.set_ylabel(f'Weighted Average of {y_metric}')
+        ax.legend()
+
+    plt.tight_layout()
+    plt.show()
+
 process_and_plot_data(participant_ids=['012', '014', '015', '016', '017', '018', '027', '028'], num_trials=12)
 
 #%%
 
-# TODO Add duration_in_ms to the data collection phase
+# TODO TBD
