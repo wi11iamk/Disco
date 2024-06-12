@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Created on Wed May 22 14:27:18 2024
@@ -9,7 +8,6 @@ Created on Wed May 22 14:27:18 2024
 import os
 import pandas as pd
 import numpy as np
-import seaborn as sns
 import matplotlib.pyplot as plt
 
 # Define the conditions and their respective target sequences
@@ -22,8 +20,8 @@ conditions = {
     'C6': ["3 4 2", "2 3 4 2 3", "4 1 3", "2 4 1 3 4", "2 4 1", "1 2 4 1 3", "3 2 4", "4 3 2 4 1", "2 3 4", "3 2 3 4 2", "1 4 3", "3 1 4 3 2"]
 }
 
-# Set the condition at the start of the script
-cond = 'C6'  # Example: 'C1'
+# Set the condition
+cond = 'C1'
 trial_counts = [3, 3, 7, 7, 11, 11, 3, 3, 7, 7, 11, 11]
 target_sequences = conditions[cond]
 
@@ -74,7 +72,7 @@ def analyse_trial_windows(events, timestamps, target_sequence):
 def parse_and_analyse_data(file_path, target_sequences, trial_counts):
     parsed_data = {
         'Trial': [], 'KeyID': [], 'EventType': [], 'TimeStamp': [], 'GlobalTimeStamp': [],
-        'CorrectKeyPressesPerS': [], 'KeypressSpeed': [], 'MicroOnline': [], 'MicroOffline': []
+        'CorrectKeyPressesPerS': [], 'KeypressSpeed': []
     }
     trial_events = {}
     trial_first_last_timestamps = {}
@@ -106,8 +104,6 @@ def parse_and_analyse_data(file_path, target_sequences, trial_counts):
             parsed_data['GlobalTimeStamp'].append(globaltime)
             parsed_data['CorrectKeyPressesPerS'].append(None)  # Placeholder
             parsed_data['KeypressSpeed'].append(None)  # Placeholder
-            parsed_data['MicroOnline'].append(None)  # Placeholder
-            parsed_data['MicroOffline'].append(None)  # Placeholder
 
     last_value = None
     # Calculate metrics
@@ -132,15 +128,6 @@ def parse_and_analyse_data(file_path, target_sequences, trial_counts):
 
                 last_value = mean_correct_per_trial
 
-                micro_online = (last_window_correct - first_window_correct) / 10
-                parsed_data['MicroOnline'][data['first_line_index']] = micro_online
-
-                if trial_index + 1 in trial_events:
-                    next_trial_data = trial_events[trial_index + 1]
-                    next_first_window_correct, _ = analyse_trial_windows(next_trial_data['events'], next_trial_data['timestamps'], target_sequence)
-                    micro_offline = (next_first_window_correct - last_window_correct) / 10
-                    parsed_data['MicroOffline'][trial_events[trial_index + 1]['first_line_index']] = micro_offline
-
             trial_index += 1
 
     return pd.DataFrame(parsed_data)
@@ -154,12 +141,6 @@ def process_all_data_files(input_folder, output_folder, target_sequences, trial_
         os.makedirs(output_folder)
     
     all_correct_presses = []
-    metrics_summary = {
-        'Participant': [],
-        'KeypressSpeed': [],
-        'MicroOnline': [],
-        'MicroOffline': []
-    }
 
     for filename in os.listdir(input_folder):
         if filename.endswith(".txt"):
@@ -171,19 +152,10 @@ def process_all_data_files(input_folder, output_folder, target_sequences, trial_
             all_correct_presses.append(dataframe['CorrectKeyPressesPerS'].dropna().tolist())
             write_data_to_csv(dataframe, output_file_path)
 
-            participant_id = filename[:4]
-            metrics_summary['Participant'].append(participant_id)
-            metrics_summary['KeypressSpeed'].append(dataframe['KeypressSpeed'].sum())
-            metrics_summary['MicroOnline'].append(dataframe['MicroOnline'].sum())
-            metrics_summary['MicroOffline'].append(dataframe['MicroOffline'].sum())
-
     # Calculate and plot data
     trial_means, trial_sems = calculate_and_plot_correct_presses(all_correct_presses, num_trials_to_plot, trial_counts)
 
-    # Plot the sum of micro-online, -offline, and total keypress speed deltas
-    plot_metrics_summary(metrics_summary)
-
-    return trial_means, metrics_summary
+    return trial_means
 
 def calculate_and_plot_correct_presses(all_correct_presses, num_trials_to_plot, trial_counts):
     if num_trials_to_plot is None:
@@ -233,34 +205,7 @@ def calculate_and_plot_correct_presses(all_correct_presses, num_trials_to_plot, 
 
     return trial_means, trial_sems
 
-def plot_metrics_summary(metrics_summary):
-    metrics_df = pd.DataFrame(metrics_summary)
-    
-    # Create the main figure with 3 subplots (for the original metrics)
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey='row')
-
-    # Plot the keypress metrics summary
-    metrics_to_plot = ['KeypressSpeed', 'MicroOnline', 'MicroOffline']
-    for i, metric in enumerate(metrics_to_plot):
-        participant_sums = metrics_df[metric]
-        mean_value = participant_sums.mean()
-        std_dev = participant_sums.std()
-
-        sns.barplot(x=[metric], y=[mean_value], color='lightblue', alpha=0.6, ax=axes[i])
-        sns.stripplot(x=[metric] * len(participant_sums), y=participant_sums, color='blue', jitter=True, ax=axes[i])
-        axes[i].errorbar([metric], [mean_value], yerr=std_dev, fmt='o', color='red', capsize=5)
-        
-        axes[i].set_title(f'Sum of {metric} per Participant')
-        axes[i].set_xlabel('Metric')
-        if i > 0:
-            axes[i].set_ylabel('')
-        else:
-            axes[i].set_ylabel('Sum of deltas')
-
-    plt.tight_layout()
-    plt.show()
-
 # Example call with specified number of trials to plot
 input_folder = f'/Users/wi11iamk/Desktop/PhD/PsyToolkit/{cond}/data'
 output_folder = f'/Users/wi11iamk/Desktop/PhD/csvOutput/UCL/{cond}'
-trial_means, metrics_summary = process_all_data_files(input_folder, output_folder, target_sequences, trial_counts, num_trials_to_plot=84)
+trial_means = process_all_data_files(input_folder, output_folder, target_sequences, trial_counts, num_trials_to_plot=84)
