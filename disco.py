@@ -15,16 +15,15 @@ import os, csv
 import numpy as np, pandas as pd
 import umap, umap.plot
 import matplotlib.pyplot as plt, seaborn as sns
-from matplotlib.patches import Patch
-from matplotlib.lines import Line2D
 from mycolours import custom_colour_list
-from parameters import participants
+from parameters import D1, D2
 from hubdt import data_loading, wavelets, t_sne, hdb_clustering, b_utils
 from scipy.stats import gaussian_kde, sem, t, norm, linregress
 from scipy.integrate import simpson
 from scipy.signal import find_peaks, savgol_filter
 from scipy.spatial.distance import jensenshannon
 from fastdtw import fastdtw
+import spyder_kernels.utils.iofuncs as io
 
 #%%
 
@@ -33,10 +32,16 @@ from fastdtw import fastdtw
 # each 'y' channel and normalise each first frame to 0
 ###
 
-pt = '036' # Choose the participant number
+pt = '067' # Choose the participant number
 day = 'D1'
-params = participants[pt] # Extract parameters for the specified participant
 
+if day == 'D1':
+    params = D1[pt]
+elif day == 'D2':
+    params = D2[pt]
+else:
+    raise ValueError("Invalid day specified. Please use 'D1' or 'D2'.")
+    
 # Load DLC h5 file, extract features and tracking data
 h5 = data_loading.load_dlc_hdf(f'./data/{day}/{pt}_{day}_NR.h5')
 h5 = data_loading.dlc_remove_scorer(h5)
@@ -151,162 +156,6 @@ def normalise_and_smooth(vector, epsilon=1e-10):
 entire_data_density, x_grid, y_grid = t_sne.calc_density(embed)
 grid_coords = np.vstack([x_grid.ravel(), y_grid.ravel()])
 
-# Conditional logic based on the 'day' variable to set slices and micro_slices
-if day == 'D1':
-    slices = [trial['1'], trial['12'], trial['34']]
-    micro_slices = list(micro.values())
-    total_slices = list(trial.values())
-elif day == 'D2':
-    slices = [trial['1'], trial['36'], trial['37']]
-else:
-    raise ValueError("Invalid day value. It should be 'D1' or 'D2'.")
-
-# Initialise container for normalised probability vectors
-probability_vectors = []
-
-# Prepare the plotting area based on the number of slices with actual data
-fig, axes = plt.subplots(1, max(len(slices), 1), figsize=((len(slices)*6), 4)) if len(slices) > 1 else plt.subplots(figsize=(6, 4))
-axes = np.atleast_1d(axes)  # Ensure axes is always iterable
-
-# Iterate through slices to calculate densities and append to lists
-for i, sl in enumerate(slices):
-    ax = axes[i] if len(slices) > 1 else axes
-    # Check if there's a slice defined
-    pcm = ax.pcolormesh(x_grid, y_grid, entire_data_density, shading='auto', cmap='plasma')
-    ax.set_title('Entire Dataset Density' if not sl else f'Slice {i+1}: {sl[0]}-{sl[1]}')
-    fig.colorbar(pcm, ax=ax, label='Density')
-    if sl:
-        slice_data = embed[sl[0]:sl[1], :]
-        slice_density = calc_density_on_fixed_grid(slice_data, grid_coords)
-        slice_vector = normalise_grid(slice_density)
-        slice_vector = normalise_and_smooth(slice_vector)  # Apply smoothing
-        probability_vectors.append(slice_vector)  # Append the normalised probability vector
-        
-        # Scatter plot for the slice data
-        ax.scatter(slice_data[:, 0], slice_data[:, 1], color='deepskyblue', s=0.75, alpha=0.33, label=f'Slice {i+1} Data Points')
-        ax.set_title(f'Slice {i+1}: {sl[0]}-{sl[1]}')
-    else:
-        # For an empty slice definition, skip or handle differently
-        continue
-    ax.legend()
-
-plt.tight_layout()
-plt.show()
-
-# Function to calculate pairwise JS divergences and write to CSV
-def calculate_js_divergences_and_write(day, pt, probability_vectors, micro_vectors=None, total_vectors=None):
-    # Determine the appropriate CSV file based on the day
-    if day == 'D1':
-        js_data = 'js_divergence_data.csv'
-        micro_data = 'js_divergence_micro.csv'
-    elif day == 'D2':
-        js_data = 'js_divergence_overnight.csv'
-    else:
-        raise ValueError("Invalid day value. It should be 'D1' or 'D2'.")
-
-    # Function to read all data into memory, checking for the presence of a participant
-    def read_data(filename):
-        exists = os.path.exists(filename)
-        if exists:
-            df = pd.read_csv(filename)
-        else:
-            df = pd.DataFrame(columns=['Participant'])
-        return df, exists
-
-    # Function to write data to CSV, only one row per participant
-    def write_data(filename, pt, divergences, df, prefix='JS_Divergence_'):
-        divergence_cols = [f'{prefix}{i+1}' for i in range(len(divergences))]
-        new_data = pd.DataFrame([[pt] + divergences], columns=['Participant'] + divergence_cols)
-
-        if pt in df['Participant'].values:
-            df.update(new_data)
-        else:
-            df = pd.concat([df, new_data], ignore_index=True)
-
-        df.to_csv(filename, index=False)
-
-    # Read existing data
-    df, file_exists = read_data(js_data)
-    if day == 'D1':
-        df_micro, file_exists_micro = read_data(micro_data)
-
-    # Ensure probability vectors sum to 1 within tolerance and apply smoothing
-    for i, vector in enumerate(probability_vectors):
-        probability_vectors[i] = normalise_and_smooth(vector)
-        if np.isclose(np.sum(probability_vectors[i]), 1.0, atol=1e-8):
-            print(f"Vector {i+1} sums to 1.0 within tolerance.")
-        else:
-            print(f"Vector {i+1} does not sum to 1.0; sum is {np.sum(probability_vectors[i])}.")
-
-    # Calculate pairwise JS divergences between listed probability vectors
-    js_divergences = []
-    for i in range(len(probability_vectors) - 1):
-        divergence = jensenshannon(probability_vectors[i], probability_vectors[i + 1])
-        js_divergences.append(divergence)
-        print(f"Jensen-Shannon Divergence between Vector {i+1} and Vector {i + 2}: {divergence}")
-
-    if day == 'D1':
-        # Ensure micro vectors sum to 1 within tolerance and apply smoothing
-        for i, vector in enumerate(micro_vectors):
-            micro_vectors[i] = normalise_and_smooth(vector)
-            if np.isclose(np.sum(micro_vectors[i]), 1.0, atol=1e-8):
-                print(f"Micro Vector {i+1} sums to 1.0 within tolerance.")
-            else:
-                print(f"Micro Vector {i+1} does not sum to 1.0; sum is {np.sum(micro_vectors[i])}.")
-
-        # Calculate pairwise JS divergences for micro-segments
-        micro_js_divergences = []
-        for i in range(len(micro_vectors) - 1):
-            divergence = jensenshannon(micro_vectors[i], micro_vectors[i + 1])
-            micro_js_divergences.append(divergence)
-
-        # Ensure total vectors sum to 1 within tolerance and apply smoothing
-        for i, vector in enumerate(total_vectors):
-            total_vectors[i] = normalise_and_smooth(vector)
-            if np.isclose(np.sum(total_vectors[i]), 1.0, atol=1e-8):
-                print(f"Total Vector {i+1} sums to 1.0 within tolerance.")
-            else:
-                print(f"Total Vector {i+1} does not sum to 1.0; sum is {np.sum(total_vectors[i])}.")
-
-        # Calculate pairwise JS divergences for total segments
-        total_js_divergences = []
-        for i in range(len(total_vectors) - 1):
-            divergence = jensenshannon(total_vectors[i], total_vectors[i + 1])
-            total_js_divergences.append(divergence)
-
-        # Concatenate micro and total divergences
-        combined_js_divergences = micro_js_divergences + total_js_divergences
-
-        # Write combined data, ensuring each participant only has one row
-        write_data(micro_data, pt, combined_js_divergences, df_micro, prefix='JS_Divergence_')
-    
-    # Write JS divergences for D1 and D2 (note: micro and total are only written for D1)
-    write_data(js_data, pt, js_divergences, df)
-
-# Calculate probability vectors for micro_slices if day is 'D1'
-if day == 'D1':
-    micro_vectors = []
-    for sl in micro_slices:
-        slice_data = embed[sl[0]:sl[1], :]
-        slice_density = calc_density_on_fixed_grid(slice_data, grid_coords)
-        slice_vector = normalise_grid(slice_density)
-        slice_vector = normalise_and_smooth(slice_vector)  # Apply smoothing
-        micro_vectors.append(slice_vector)
-
-    # Calculate probability vectors for total_slices
-    total_vectors = []
-    for sl in total_slices:
-        slice_data = embed[sl[0]:sl[1], :]
-        slice_density = calc_density_on_fixed_grid(slice_data, grid_coords)
-        slice_vector = normalise_grid(slice_density)
-        slice_vector = normalise_and_smooth(slice_vector)  # Apply smoothing
-        total_vectors.append(slice_vector)
-
-    # Calculate and write JS divergences
-    calculate_js_divergences_and_write(day, pt, probability_vectors, micro_vectors, total_vectors)
-else:
-    # Calculate and write JS divergences only for D2
-    calculate_js_divergences_and_write(day, pt, probability_vectors)
 
 #%%
 
@@ -327,8 +176,8 @@ fig, cluster_colors = hdb_clustering.plot_hdb_over_tsne(embed, labels, probabili
 
 #%%
 
-### 
-# Calcuate the mean length in frames of each label; store the first frame of
+###
+# Calculate the mean length in frames of each label; store the first frame of
 # each occurrence of each label
 ###
 
@@ -342,31 +191,39 @@ def calculate_label_data(arr):
     start_frame = 0
 
     arr = arr.flatten()  # Ensure the array is flattened for iteration
-    # Filter out -1 values
-    a_labels_noiseless = arr[arr != -1]
+    # Generate original indices array
+    original_indices = np.arange(len(arr))
 
-    for idx, val in enumerate(a_labels_noiseless):
+    # Filter out -1 values
+    noiseless_mask = arr != -1
+    a_labels_noiseless = arr[noiseless_mask]
+    original_indices_noiseless = original_indices[noiseless_mask]
+
+    # Combine the original indices and labels into a single array
+    a_labels_combined = np.column_stack((original_indices_noiseless, a_labels_noiseless))
+
+    for idx, (original_idx, val) in enumerate(a_labels_combined):
         if val == current_val:
             count += 1
         else:
             if current_val is not None:
-                finalise_count(continuous_counts, current_val, count, start_frame)
+                finalise_count(continuous_counts, current_val, count, start_frame, a_labels_combined)
             current_val = val
             count = 1
             start_frame = idx  # Start index is adjusted due to filtered array
 
     # Finalise the last sequence if any valid count exists
     if current_val is not None and count > 0:
-        finalise_count(continuous_counts, current_val, count, start_frame)
+        finalise_count(continuous_counts, current_val, count, start_frame, a_labels_combined)
 
-    return process_counts(continuous_counts), a_labels_noiseless
+    return process_counts(continuous_counts), a_labels_combined
 
 # Function to update or initialise label data in 'continuous_counts'
-def finalise_count(continuous_counts, val, count, start_frame):
+def finalise_count(continuous_counts, val, count, start_frame, combined_array):
     if val not in continuous_counts:
         continuous_counts[val] = {'counts': [], 'start_frames': []}
     continuous_counts[val]['counts'].append(count)
-    continuous_counts[val]['start_frames'].append(start_frame)
+    continuous_counts[val]['start_frames'].append(combined_array[start_frame, 0])
 
 # Function to compute statistics for each label based on its counts
 def process_counts(continuous_counts):
@@ -380,7 +237,7 @@ def process_counts(continuous_counts):
     return results
 
 # Usage
-a_labels_data, a_labels_noiseless = calculate_label_data(a_labels)
+a_labels_data, a_labels_combined = calculate_label_data(a_labels)
 
 #%%
 
@@ -425,7 +282,7 @@ for i, trial_counts in enumerate(normalised_trial_counts_including_noise):
         plot_matrix[i, label+1] = normalised_count  # +1 to offset for noise at index 0
 
 # Plot excluding noise
-fig, ax = plt.subplots(figsize=(14, 8))
+fig, ax = plt.subplots(figsize=(20, 8))
 trial_indices = np.arange(1, len(normalised_trial_counts) + 1)
 for label in range(0, max_label_non_neg + 1):
     bottom = np.sum(plot_matrix_non_neg[:, :label], axis=1)
@@ -436,7 +293,7 @@ ax.set_title('Normalised Distribution Excluding Noise')
 ax.legend(title="Labels", loc="best", bbox_to_anchor=(1.0, 1.0))
 
 # Plot including noise
-fig, ax = plt.subplots(figsize=(14, 8))
+fig, ax = plt.subplots(figsize=(20, 8))
 trial_indices = np.arange(1, len(normalised_trial_counts_including_noise) + 1)
 for label in range(-1, max_label + 1):
     if label == -1:
@@ -467,7 +324,12 @@ plt.show()
 ###
 
 labels_info = {}
-total_trials = 36
+if day == 'D1':
+    total_trials = 36
+elif day == 'D2':
+    total_trials = 72
+else:
+    raise ValueError("Invalid day specified. Please use 'D1' or 'D2'.")
 
 # Initialise label info structure
 for i, trial_counts in enumerate(normalised_trial_counts_including_noise):
@@ -484,14 +346,14 @@ for i, trial_counts in enumerate(normalised_trial_counts_including_noise):
             # Mark presence of the label in this specific trial
             labels_info[label]['trials'][i] = 1 if label in trial_counts else 0
 
-# Ensure the base directory exists
+# Ensure the base path exists
 base_path = f'./data/{day}/{pt}/'
 os.makedirs(base_path, exist_ok=True)  # Create base path
 
 # Create directories for each label
 for label in labels_info:
     label_dir = os.path.join(base_path, f'Label_{label:02d}')
-    os.makedirs(label_dir, exist_ok=True)  # Create a directory for each label
+    os.makedirs(label_dir, exist_ok=True)  # Create a path for each label
 
 # Define all the fieldnames including 'TnW' columns for normalised weights
 fieldnames = ['label', 'key_press_count', 'duration_in_ms', 'normalised_hz', 'overlap']
@@ -528,12 +390,12 @@ with open(filename, 'w', newline='') as csvfile:
 # synergy; timeseries and kinematics calculations are based on this range
 ###
 
-syn_frame_start = 13305
-syn_frame_end = syn_frame_start+79
+syn_frame_start = 38512
+syn_frame_end = syn_frame_start+131
 
 fig3 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_grid, y_grid)
 
-fig4, cluster = b_utils.plot_cluster_wav_mags(proj, labels, 0, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+fig4, cluster = b_utils.plot_cluster_wav_mags(proj, labels, 10, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
 
 #%%
 
@@ -835,7 +697,7 @@ print(f"Total percent overlap among channels: {percent_overlap:.2f}%")
 #%%
 
 ###
-# Update the label specific CSV file with metrics for analysed label
+# Update the label specific CSV file with metrics for the analysed label
 ###
 
 def update_csv_data(pt, cluster, kp, dm, hz, ol):
@@ -863,354 +725,6 @@ def update_csv_data(pt, cluster, kp, dm, hz, ol):
 # Sample function calls with hypothetical values
 update_csv_data(pt=pt, cluster=cluster, kp=total_peaks_across_channels, dm = duration_in_ms, hz=normalised_frequency_hz, ol=percent_overlap)
 
-#%%
-
-###
-# Calculate and plot integrals of each channel per trial; calculate and plot
-# the noralised frequency of peaks in hz per trial 
-###
-
-fig, (ax, ax_vel, ax_acc) = plt.subplots(3, 1, figsize=(18, 18))  # Create three subplots for area, velocity, and acceleration
-
-normalised_freq_per_trial = []
-overlap_per_trial = []
-
-velocities_per_trial = []
-accelerations_per_trial = []
-
-trial_keys = list(trial.keys())  # Get a list of trial keys to use for x-ticks
-x_positions = range(1, len(trial_keys) + 1)  # Generate x positions for each bar
-
-for idx, (trial_number, (trial_start, trial_end)) in enumerate(trial.items(), start=1):
-    # Slice the pre-processed y-values for the current trial
-    x_range = np.arange(trial_start, trial_end)
-    y_trial = y_values_full[trial_start:trial_end, :]
-    y_trial_positive = np.abs(y_trial)
-    
-    total_peaks, onset_offset_data, _, _ = time_series_events(ax, x_range, y_trial, channels, colors, params['y_threshold'], plot=False)
-    total_overlap_frames, _ = calculate_overlaps(onset_offset_data)
-    overlap_per_trial.append(total_overlap_frames / (trial_end - trial_start + 1))
-
-    area_under_curve = [simpson(y_trial_positive[:, i]) for i in range(y_trial_positive.shape[1])]
-    total_area = sum(area_under_curve)
-    bottom_val = 0
-    
-    # Velocity and acceleration calculations
-    trial_velocities = []
-    trial_accelerations = []
-    for i in range(y_trial.shape[1]):
-        velocities = np.abs(np.diff(y_trial[:, i]))
-        accelerations = np.abs(np.diff(velocities))
-        n_samples = len(velocities)
-        
-        # Calculate standard error of the mean
-        sem_velocity = np.std(velocities) / np.sqrt(n_samples)
-        sem_acceleration = np.std(accelerations) / np.sqrt(n_samples - 1)
-        
-        trial_velocities.append(np.mean(velocities))
-        trial_accelerations.append(np.mean(accelerations))
-        
-        # Plotting SEM bars for velocities and accelerations
-        ax_vel.errorbar(x_positions[idx-1], np.mean(velocities), yerr=sem_velocity, fmt='o', color=colors[i], capsize=5)
-        ax_acc.errorbar(x_positions[idx-1], np.mean(accelerations), yerr=sem_acceleration, fmt='o', color=colors[i], capsize=5)
-    
-    velocities_per_trial.append(trial_velocities)
-    accelerations_per_trial.append(trial_accelerations)
-
-    # For each channel, add a segment to the bar at the correct x position
-    for i, area in enumerate(area_under_curve):
-        ax.bar(x_positions[idx-1], area, bottom=bottom_val, color=colors[i])
-        bottom_val += area
-
-    # Calculate normalised frequency for the trial
-    total_peaks_across_channels = sum([len(find_peaks(y_trial[:, i], height=y_threshold, prominence=10)[0]) for i in range(y_trial.shape[1])])
-    normalised_frequency_hz = normalise_peaks_to_hz(total_peaks_across_channels, trial_end - trial_start + 1)
-    normalised_freq_per_trial.append(normalised_frequency_hz)
-
-# Correctly setting x-ticks
-ax.set_xticks(x_positions)
-ax.set_xticklabels(trial_keys)
-
-# Plotting the normalised frequency as a line plot on a secondary y-axis
-ax2 = ax.twinx()
-ax2.plot(x_positions, normalised_freq_per_trial, color='slategrey', marker='o', label='Normalised Frequency (Hz)')
-ax2.set_ylabel('Normalised Frequency (Hz)', color='slategrey')
-ax2.tick_params(axis='y', labelcolor='slategrey')
-
-# Define the third y-axis for overlap and set a fixed range
-ax3 = ax.twinx()
-ax3.spines['right'].set_position(('outward', 60))
-ax3.plot(x_positions, overlap_per_trial, color='red', marker='x', label='Overlap (frames per second)')
-ax3.set_ylabel('Overlap (frames)', color='red')
-ax3.set_ylim(0, 1)  # Set the y-axis to range from 0 to 1
-
-# Ensure the x-axis aligns for both plots
-ax.set_xticks(x_positions)
-ax.set_xticklabels(trial_keys)
-
-# Adding labels and title
-ax.set_xlabel('Trial', fontsize=14)
-ax.set_ylabel('Total Area Under Curve', fontsize=14)
-plt.title('Total Activity per Trial with Normalised Frequency', fontsize=16)
-
-ax_vel.set_ylabel('Velocity (mean per trial)')
-ax_vel.set_title('Velocity Analysis', fontsize=16)
-
-ax_acc.set_ylabel('Acceleration (mean per trial)')
-ax_acc.set_title('Acceleration Analysis', fontsize=16)
-
-# Adding legend for the channels, and possibly for the normalised frequency if desired
-legend_elements = [Patch(facecolor=colors[i], edgecolor='white', label=channels[i]) for i in range(len(channels))] + [Line2D([0], [0], color='slategrey', marker='o', label='Normalised Hz')]
-ax.legend(handles=legend_elements[::-1], loc='upper left')
-
-plt.tight_layout()
-plt.show()
-#%%
-
-###
-# Import, parse, and analyse PsyToolkit .data.txt files for correct keypresses
-# per second over trial, micro-online and -offline periods
-###
-
-def patternDetect(stream, targetSequence=[4,1,3,2,4]):
-    # Generate pairwise tuples for the target sequence, including a 'ghost' element for circularity
-    target_pairs = [(targetSequence[i], targetSequence[(i+1) % len(targetSequence)]) for i in range(len(targetSequence))]
-    
-    # Generate pairwise tuples for the stream
-    stream_pairs = [(stream[i], stream[i+1]) for i in range(len(stream)-1)]
-    
-    # Count matching pairs
-    matching_pairs_count = sum(1 for pair in stream_pairs if pair in target_pairs)
-    
-    # Initialise score based on matching pairs count
-    score = matching_pairs_count
-    
-    # Identify segments of consecutive matches in the target sequence within the stream
-    consecutive_matches = [pair in target_pairs for pair in stream_pairs]
-    
-    # Check for the start of a sequence or interruptions
-    if consecutive_matches:
-        score += 1  # Add for the start of the sequence
-    
-    # Adjust for interruptions, considering each False followed by True as the start of a new sequence segment
-    interruptions = sum(1 for i in range(len(consecutive_matches)-1) if not consecutive_matches[i] and consecutive_matches[i+1])
-    score += interruptions
-
-    return score
-
-# Test the function with example scenarios.
-# print(patternDetect([1,3,2,4,4]))           # Expecting 5
-# print(patternDetect([4,1,3,2,4,4]))         # Expecting 6
-# print(patternDetect([4,1,1,1,1,1]))         # Expecting 2
-# print(patternDetect([4,1,1,1,1,1,4,1,3,2])) # Expecting 6
-# print(patternDetect([4,1,3,2,4,4,1,3,2]))   # Expecting 9
-# print(patternDetect([4,1,1,4,1,3,4,1]))     # Expecting 7
-
-# Function to calculate score within a time window
-def calculate_correct_keypresses_within_window(events, timestamps, window_start, window_end, target_sequence):
-    slice_events = [event for event, timestamp in zip(events, timestamps) if window_start <= timestamp <= window_end]
-    return patternDetect(slice_events, target_sequence)
-
-# Function to analyse scoring in trial start/end windows
-def analyse_trial_windows(events, timestamps, target_sequence):
-    start_ts, end_ts = timestamps[0], timestamps[-1]
-    first_window_end = min(start_ts + 1000, end_ts)
-    last_window_start = max(end_ts - 1000, start_ts)
-    first_window_correct = calculate_correct_keypresses_within_window(events, timestamps, start_ts, first_window_end, target_sequence)
-    last_window_correct = calculate_correct_keypresses_within_window(events, timestamps, last_window_start, end_ts, target_sequence)
-    return first_window_correct, last_window_correct
-
-# Function to parse stream data and analyse it
-def parse_and_analyse_data(file_path, target_sequence):
-    parsed_data = {
-        'Trial': [], 'KeyID': [], 'EventType': [], 'TimeStamp': [], 'GlobalTimeStamp': [],
-        'CorrectKeyPressesPerS': [], 'KeypressSpeed': [], 'MicroOnline': [], 'MicroOffline': []
-    }
-    trial_events = {}
-    trial_first_last_timestamps = {}
-
-    ignore_first_row = True
-    with open(file_path, 'r') as file:
-        for line in file:
-            if ignore_first_row:
-                ignore_first_row = False
-                continue  # Skip the first row
-            parts = line.strip().split()
-            if len(parts) < 5 or parts[:5] == ['0', '0', '99', '0', '0']:
-                continue  # Skip lines not matching expected format
-            trial_number, event_count, event_type, timestamp, globaltime = map(int, parts[:5])
-            if trial_number not in trial_events:
-                trial_events[trial_number] = {'events': [], 'timestamps': [], 'first_line_index': len(parsed_data['Trial'])}
-                trial_first_last_timestamps[trial_number] = {'first': timestamp, 'last': timestamp}
-            else:
-                trial_first_last_timestamps[trial_number]['last'] = timestamp
-
-            trial_events[trial_number]['events'].append(event_type)
-            trial_events[trial_number]['timestamps'].append(timestamp)
-
-            parsed_data['Trial'].append(trial_number)
-            parsed_data['KeyID'].append(event_count)
-            parsed_data['EventType'].append(event_type)
-            parsed_data['TimeStamp'].append(timestamp)
-            parsed_data['GlobalTimeStamp'].append(globaltime)
-            parsed_data['CorrectKeyPressesPerS'].append(None)  # Placeholder
-            parsed_data['KeypressSpeed'].append(None)  # Placeholder
-            parsed_data['MicroOnline'].append(None)  # Placeholder
-            parsed_data['MicroOffline'].append(None)  # Placeholder
-
-    last_value = None
-    # Calculate metrics
-    for trial_number, data in trial_events.items():
-        events, timestamps = data['events'], data['timestamps']
-        first_window_correct, last_window_correct = analyse_trial_windows(events, timestamps, target_sequence)
-        
-        # Example multiple readings per trial, simulate or actual implementation as needed
-        correct_per_trial = [patternDetect(events, target_sequence) / 10 for _ in range(10)]
-        mean_correct_per_trial = np.mean(correct_per_trial)
-
-        parsed_data['CorrectKeyPressesPerS'][data['first_line_index']] = mean_correct_per_trial
-
-        if last_value is not None:
-            delta = mean_correct_per_trial - last_value if mean_correct_per_trial is not None else None
-            parsed_data['KeypressSpeed'][data['first_line_index']] = delta
-
-        last_value = mean_correct_per_trial
-
-        micro_online = (last_window_correct - first_window_correct) / 10
-        parsed_data['MicroOnline'][data['first_line_index']] = micro_online
-
-        if trial_number + 1 in trial_first_last_timestamps:
-            next_trial_data = trial_events[trial_number + 1]
-            next_first_window_correct, _ = analyse_trial_windows(next_trial_data['events'], next_trial_data['timestamps'], target_sequence)
-            micro_offline = (next_first_window_correct - last_window_correct) / 10
-            parsed_data['MicroOffline'][trial_events[trial_number + 1]['first_line_index']] = micro_offline
-
-    return pd.DataFrame(parsed_data)
-
-# Function to write analysis results to CSV
-def write_data_to_csv(dataframe, output_file_path):
-    dataframe.to_csv(output_file_path, index=False)
-
-def process_all_data_files(input_folder, output_folder, target_sequence, num_trials_to_plot=None):
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-    
-    all_correct_presses = []
-    metrics_summary = {
-        'Participant': [],
-        'KeypressSpeed': [],
-        'MicroOnline': [],
-        'MicroOffline': []
-    }
-
-    for filename in os.listdir(input_folder):
-        if filename.endswith(".data.txt"):
-            file_path = os.path.join(input_folder, filename)
-            output_file_name = filename[:3] + '.csv'
-            output_file_path = os.path.join(output_folder, output_file_name)
-            
-            dataframe = parse_and_analyse_data(file_path, target_sequence)
-            all_correct_presses.append(dataframe['CorrectKeyPressesPerS'].dropna().tolist())
-            write_data_to_csv(dataframe, output_file_path)
-
-            participant_id = filename[:3]
-            metrics_summary['Participant'].append(participant_id)
-            metrics_summary['KeypressSpeed'].append(dataframe['KeypressSpeed'].sum())
-            metrics_summary['MicroOnline'].append(dataframe['MicroOnline'].sum())
-            metrics_summary['MicroOffline'].append(dataframe['MicroOffline'].sum())
-
-    # Calculate and plot data
-    trial_means, trial_sems = calculate_and_plot_correct_presses(all_correct_presses, num_trials_to_plot)
-
-    # Plot the sum of micro-online, -offline, and total keypress speed deltas
-    plot_metrics_summary(metrics_summary)
-
-    return trial_means, metrics_summary
-
-def calculate_and_plot_correct_presses(all_correct_presses, num_trials_to_plot):
-    if num_trials_to_plot is None:
-        num_trials_to_plot = len(all_correct_presses[0])  # Default to the number of trials in the first participant's data
-
-    trial_means = []
-    trial_sems = []
-    x_values = list(range(1, num_trials_to_plot + 1))
-
-    # Prepare for plotting
-    plt.figure(figsize=(10, 5))
-
-    # Plot individual participant data points for each trial
-    for participant_data in all_correct_presses:
-        if len(participant_data) >= num_trials_to_plot:
-            plt.scatter(x_values, participant_data[:num_trials_to_plot], color='grey', alpha=0.5, label='Participant Data' if 'Participant Data' not in plt.gca().get_legend_handles_labels()[1] else "")
-
-    # Calculate mean and SEM for each trial to plot
-    for i in range(num_trials_to_plot):
-        trial_data = [participant[i] for participant in all_correct_presses if len(participant) > i]
-        trial_mean = np.mean(trial_data)
-        trial_sem = np.std(trial_data, ddof=1) / np.sqrt(len(trial_data))
-        trial_means.append(trial_mean)
-        trial_sems.append(trial_sem)
-
-    # Plot the mean values with SEM error bars, connected with a line
-    plt.errorbar(x_values, trial_means, yerr=trial_sems, fmt='-o', color='blue', label='Mean with SEM', ecolor='blue', alpha=0.75, capsize=5)
-
-    plt.title('Mean Correct Key Presses per S with SEM')
-    plt.xlabel('Trial Number')
-    plt.ylabel('Correct Key Presses per S')
-    plt.xticks(x_values)
-    plt.legend()
-    plt.show()
-
-    return trial_means, trial_sems
-
-def plot_metrics_summary(metrics_summary):
-    metrics_df = pd.DataFrame(metrics_summary)
-    
-    # Read the JS divergence data from the CSV file
-    js_df = pd.read_csv('js_divergence_micro.csv')
-    
-    # Calculate Total divergence, Micro-online divergence, and Micro-offline divergence
-    js_df['Total_divergence'] = js_df.loc[:, 'JS_Divergence_72':'JS_Divergence_106'].sum(axis=1)
-    js_df['Micro_online_divergence'] = js_df.loc[:, 'JS_Divergence_1':'JS_Divergence_36'].iloc[:, ::2].sum(axis=1)
-    js_df['Micro_offline_divergence'] = js_df.loc[:, 'JS_Divergence_1':'JS_Divergence_36'].iloc[:, 1::2].sum(axis=1)
-
-    # Create the main figure with 6 subplots (3 for the original metrics and 3 for the JS divergence data)
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12), sharey='row')
-
-    # Plot the keypress metrics summary
-    metrics_to_plot = ['KeypressSpeed', 'MicroOnline', 'MicroOffline']
-    for i, metric in enumerate(metrics_to_plot):
-        sns.barplot(x=[metric] * len(metrics_df), y=metrics_df[metric], estimator=np.mean, errorbar='sd', color='red', alpha=0.6, ax=axes[0, i])
-        sns.stripplot(x=[metric] * len(metrics_df), y=metrics_df[metric], color='blue', jitter=True, ax=axes[0, i])
-        axes[0, i].set_title(f'Sum of {metric} deltas per Participant')
-        axes[0, i].set_xlabel('')
-        if i > 0:
-            axes[0, i].set_ylabel('')
-        else:
-            axes[0, i].set_ylabel('Sum of deltas')
-
-    # Plot the JS divergence data
-    js_metrics = ['Total_divergence', 'Micro_online_divergence', 'Micro_offline_divergence']
-    titles = ['Total Divergence', 'Micro-online Divergence', 'Micro-offline Divergence']
-    for i, metric in enumerate(js_metrics):
-        sns.barplot(x=[metric] * len(js_df), y=js_df[metric], estimator=np.mean, errorbar='sd', color='red', alpha=0.6, ax=axes[1, i])
-        sns.stripplot(x=[metric] * len(js_df), y=js_df[metric], color='blue', jitter=True, ax=axes[1, i])
-        axes[1, i].set_title(titles[i])
-        axes[1, i].set_xlabel('')
-        if i > 0:
-            axes[1, i].set_ylabel('')
-        else:
-            axes[1, i].set_ylabel('Sum of JS Divergence')
-
-    plt.tight_layout()
-    sns.despine()
-    plt.show()
-
-# Example call with specified number of trials to plot
-input_folder = '/Users/wi11iamk/Desktop/PhD/PsyToolkit/D1'
-output_folder = '/Users/wi11iamk/Desktop/csvOutput'
-target_sequence = [4,1,3,2,4]
-trial_means, metrics_summary = process_all_data_files(input_folder, output_folder, target_sequence, num_trials_to_plot=36)
 #%%
 
 ###
@@ -1311,7 +825,168 @@ def process_and_plot_data(participant_ids, num_trials):
     plt.tight_layout()
     plt.show()
 
-process_and_plot_data(participant_ids=['012', '014', '015', '016', '017', '018', '027', '028'], num_trials=12)
+process_and_plot_data(participant_ids=['012', '014', '015', '016', '017', '018', '027', '028', '029', '036', '037', '039', '044', '049'], num_trials=12)
+
+#%%
+
+###
+# Iterate over participant specific .spydata files to extract and analyse label
+# distributions across trials, perform Jensen-Shannon Divergence calculations
+# between trials, permute results to derive an empirical p value for each pair,
+# then calculate a combined p value with Stouffer's method across participants
+###
+
+# Function to load a .spydata file and return the variables as a dictionary.
+def load_spydata(file_path):
+    try:
+        data, error = io.load_dictionary(file_path)
+        if error:
+            raise ValueError(f"Error loading {file_path}: {error}")
+        return data
+    except Exception as e:
+        print(f"Failed to load {file_path}: {e}")
+        return None
+
+# Function to clear all variables from the global workspace except those in vars_to_keep.
+def clear_workspace(vars_to_keep=[]):
+    global_vars = list(globals().keys())
+    for var in global_vars:
+        if var not in vars_to_keep and not var.startswith('_'):
+            del globals()[var]
+
+# Function to compare cluster memberships between two time points, excluding noise label (-1).
+def compare_clusters(cluster_labels1, cluster_labels2, all_labels):
+    counts1 = np.array([np.sum(cluster_labels1 == label) for label in all_labels if label != -1])
+    counts2 = np.array([np.sum(cluster_labels2 == label) for label in all_labels if label != -1])
+    return counts1, counts2
+
+# Function to process each .spydata file in the given directory.
+def process_directory(directory):
+    a_labels_vars = []
+
+    # Function to process a .spydata file.
+    def process_file(file_path, file_name):
+        data = load_spydata(file_path)
+        if data is not None and 'a_labels' in data:
+            a_labels_key = f'a_labels_{file_name}'
+            globals()[a_labels_key] = data['a_labels'].flatten()  # Ensure it's 1D
+            a_labels_vars.append((a_labels_key, file_name))
+            print(f"Loaded and renamed 'a_labels' to '{a_labels_key}'")
+            vars_to_keep = ['os', 'np', 'jensenshannon', 'norm', 'io', 'load_spydata', 'clear_workspace', 'compare_clusters', 'process_directory', 'a_labels_vars', 'process_file', 'flatten_counts', 'convert_to_proportions', 'permutation_test_jsd', 'combine_pvalues', 'day'] + [v[0] for v in a_labels_vars]
+            clear_workspace(vars_to_keep=vars_to_keep)
+
+    for filename in os.listdir(directory):
+        file_path = os.path.join(directory, filename)
+        if filename.endswith(".spydata") and os.path.isfile(file_path):
+            process_file(file_path, filename.split('.')[0])
+    
+    return a_labels_vars
+
+# Directory containing the .spydata files
+directory = f'/Users/wi11iamk/Documents/GitHub/HUB_DT/data/{day}spydata'
+
+# Process the directory and retrieve all saved 'a_labels' variables
+a_labels_vars = process_directory(directory)
+
+# Print out the names of all saved 'a_labels' variables to verify
+print("Saved a_labels variables:", a_labels_vars)
+
+# Collect all permutation test p-values from all participants
+all_p_values = []
+
+# Function to convert counts to proportions (probability distributions)
+def convert_to_proportions(counts, epsilon=1e-10):
+    total_counts = counts.sum()
+    proportions = (counts + epsilon) / (total_counts + epsilon * len(counts))
+    proportions /= proportions.sum()  # Ensure proportions sum to 1
+    
+    # Debugging: Check for issues with normalisation
+    if not np.isclose(proportions.sum(), 1.0):
+        print(f"Debug: Normalisation issue, proportions sum to {proportions.sum()} instead of 1.0")
+        print(f"Counts: {counts}")
+        print(f"Proportions after normalisation: {proportions}")
+    
+    return proportions
+
+# Function to perform permutation test to determine the significance of the observed JSD
+def permutation_test_jsd(proportions1, proportions2, observed_jsd, n_permutations=100000):
+    combined_counts = np.concatenate((proportions1, proportions2))
+    n = len(proportions1)
+    perm_jsds = []
+
+    for _ in range(n_permutations):
+        np.random.shuffle(combined_counts)
+        perm_proportions1 = combined_counts[:n]
+        perm_proportions2 = combined_counts[n:]
+        perm_jsd = jensenshannon(perm_proportions1, perm_proportions2)
+        perm_jsds.append(perm_jsd)
+
+    perm_jsds = np.array(perm_jsds)
+    p_value = np.sum(perm_jsds >= observed_jsd) / n_permutations
+    return observed_jsd, p_value
+
+# Process each 'a_labels' variable for slicing and clustering analysis
+for a_labels_key, participant_id in a_labels_vars:
+    a_labels = globals()[a_labels_key]
+
+    # Get all possible unique labels from the entire a_labels array, excluding noise label (-1)
+    all_labels = np.unique(a_labels)
+    all_labels = all_labels[all_labels != -1]  # Exclude noise label (-1)
+    
+    # Define slices
+    slices = [trial['1'], trial['12']]
+    
+    # Initialise container for slice data segments
+    cluster_labels_segments = []
+
+    # Use the existing HDBSCAN labels
+    for sl in slices:
+        if sl:
+            slice_labels = a_labels[sl[0]:sl[1]]
+            cluster_labels_segments.append(slice_labels)
+
+    # Compare clusters between slices
+    counts1, counts2 = compare_clusters(cluster_labels_segments[0], cluster_labels_segments[1], all_labels)
+
+    # Convert counts to proportions
+    proportions1 = convert_to_proportions(counts1)
+    proportions2 = convert_to_proportions(counts2)
+
+    # Debugging: Check which proportions do not sum to 1 and print the actual sum
+    if not np.isclose(np.sum(proportions1), 1.0):
+        print(f"Debug: Proportions1 for participant {participant_id} do not sum to 1. Actual sum: {np.sum(proportions1)}")
+    if not np.isclose(np.sum(proportions2), 1.0):
+        print(f"Debug: Proportions2 for participant {participant_id} do not sum to 1. Actual sum: {np.sum(proportions2)}")
+
+    # Calculate the observed Jensen-Shannon Divergence between each pair of distributions
+    observed_jsd = jensenshannon(proportions1, proportions2)
+
+    # Perform permutation test
+    _, p_value = permutation_test_jsd(proportions1, proportions2, observed_jsd, n_permutations=100000)
+
+    # Print the results for each participant
+    print(f"Observed JSD for {participant_id}: {observed_jsd}, Permutation Test P-value: {p_value}")
+
+    # Store the p-value
+    all_p_values.append(p_value)
+
+# Combine p-values using Stouffer's method
+def combine_pvalues(p_values):
+    z_scores = np.array([norm.ppf(1 - p / 2) for p in p_values])  # Convert two-tailed p-values
+    combined_z = np.sum(z_scores) / np.sqrt(len(z_scores))
+    combined_p = 2 * (1 - norm.cdf(np.abs(combined_z)))  # Convert back to a two-tailed p-value
+    return combined_p
+
+combined_p_value = combine_pvalues(all_p_values)
+
+# Print the final combined p-value
+print(f"Combined P-value across all participants: {combined_p_value}")
+
+# Final Decision
+if combined_p_value < 0.05:
+    print("Final Decision: reject the null hypothesis (the distributions are different across participants)")
+else:
+    print("Final Decision: fail to reject the null hypothesis (no significant difference across participants)")
 
 #%%
 
