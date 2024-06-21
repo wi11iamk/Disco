@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt, seaborn as sns
 from mycolours import custom_colour_list
 from parameters import D1, D2
 from hubdt import data_loading, wavelets, t_sne, hdb_clustering, b_utils
-from scipy.stats import gaussian_kde, sem, t, norm, linregress
+from scipy.stats import sem, t, norm, linregress
 from scipy.integrate import simpson
 from scipy.signal import find_peaks, savgol_filter
 from scipy.spatial.distance import jensenshannon
@@ -112,7 +112,8 @@ proj = np.transpose(proj)
 #%%
 
 ###
-# Fit wavelet projection into two dimensional embedded space (UMAP); plot
+# Fit wavelet projection into two dimensional embedded space (UMAP); plot;
+# calculate the KDE and dimensions of the entire data set
 ###
 
 mapper = umap.UMAP(n_neighbors=35, n_components=2, min_dist=0).fit(proj)
@@ -124,33 +125,6 @@ plt.scatter(embed[:, 0], embed[:, 1], s=0.25, c='blue', alpha=0.25)
 umap.plot.connectivity(mapper)
 
 umap.plot.diagnostic(mapper, diagnostic_type='pca')
-            
-#%%
-
-###
-# Calculate and plot a gaussian KDE over embedded data; calculate a list of
-# slices from the embedding and plot each as an overlay atop the gaussian KDE;
-# calculate the JS divergence between each slice as probability vectors
-###
-
-# Function to calculate density on the fixed grid
-def calc_density_on_fixed_grid(data, grid_coords):
-    kde = gaussian_kde(data.T)
-    density = kde(grid_coords).reshape(x_grid.shape)
-    return density
-
-# Function to normalise and flatten a grid to form a probability vector
-def normalise_grid(grid):
-    flattened = grid.flatten()
-    normalised = flattened / np.sum(flattened)
-    return normalised
-
-# Function to normalise and add smoothing to the probability vector
-def normalise_and_smooth(vector, epsilon=1e-10):
-    vector = np.array(vector, dtype=np.float64)
-    vector = vector + epsilon  # Add a small constant to avoid zero probabilities
-    vector = vector / np.sum(vector)  # Re-normalise the vector
-    return vector
 
 # Calculate a density grid for the entire dataset
 entire_data_density, x_grid, y_grid = t_sne.calc_density(embed)
