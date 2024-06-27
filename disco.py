@@ -8,7 +8,7 @@ Created on Wed Feb 28 19:55:56 2024
 #%%
 
 ###
-# Import necessary libraries
+# Import libraries
 ###
 
 import os, csv
@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt, seaborn as sns
 from mycolours import custom_colour_list
 from parameters import D1, D2
 from hubdt import data_loading, wavelets, t_sne, hdb_clustering, b_utils
-from scipy.stats import sem, t, norm, linregress
+from scipy.stats import sem, t, norm, linregress, ttest_rel
 from scipy.integrate import simpson
 from scipy.signal import find_peaks, savgol_filter
 from scipy.spatial.distance import jensenshannon
@@ -68,6 +68,7 @@ for col in range(1, 8, 2):  # Iterate over y-value columns (1, 3, 5, 7)
 ###
     
 # Initialise a dictionary to store frames for each trial
+
 trial = {}
 
 if day == 'D1':
@@ -364,20 +365,18 @@ with open(filename, 'w', newline='') as csvfile:
 # synergy; timeseries and kinematics calculations are based on this range
 ###
 
-syn_frame_start = 38512
-syn_frame_end = syn_frame_start+131
+syn_frame_start = 4912
+syn_frame_end = syn_frame_start+112-28
 
 fig3 = b_utils.plot_curr_cluster(embed, entire_data_density, syn_frame_start, x_grid, y_grid)
 
-fig4, cluster = b_utils.plot_cluster_wav_mags(proj, labels, 10, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
+fig4, cluster = b_utils.plot_cluster_wav_mags(proj, labels, 8, features, frequencies, wave_correct=True, response_correct=True, mean_response=True, colour='lightblue')
 
 #%%
 
 ###
 # Calculate the time series of each channel, the frame of each keypress, the
-# onset and offset of each keypress; calculate integrals of each channel;
-# calculate and plot the mean and 95% CI of all channels over all occurrences
-# of the synergy of interest
+# onset and offset of each keypress; calculate integrals of each channel
 ###
 
 channels = ['Little', 'Ring', 'Middle', 'Index']
@@ -562,6 +561,11 @@ y_values_full, *_ = process_y_values(tracking_filtered)
 
 #%%
 
+###
+# Using fast Dynamic Time Warping (DTW), calculate and plot the mean and 95% CI
+# over all occurrences of the synergy of interest
+###
+
 similar_segment_indices = find_similar_series(y_values_syn, y_values_full,
             syn_frame_start, syn_frame_end, num_segments=10, dist_threshold=1000)
 
@@ -665,13 +669,13 @@ plt.title('Total Percent Overlap Among Channels')
 plt.ylabel('Percent Overlap')
 plt.ylim(0, 100)  # Assuming percent values, adjust if necessary
 plt.show()
-# Display the result
+# Print the result
 print(f"Total percent overlap among channels: {percent_overlap:.2f}%")
 
 #%%
 
 ###
-# Update the label specific CSV file with metrics for the analysed label
+# Update the participant specific CSV file with metrics for the analysed label
 ###
 
 def update_csv_data(pt, cluster, kp, dm, hz, ol):
@@ -799,16 +803,19 @@ def process_and_plot_data(participant_ids, num_trials):
     plt.tight_layout()
     plt.show()
 
-process_and_plot_data(participant_ids=['012', '014', '015', '016', '017', '018', '027', '028', '029', '036', '037', '039', '044', '049'], num_trials=12)
+process_and_plot_data(participant_ids=['012', '014', '015', '016', '017', '018', '027', '028', '029', '036', '037', '039', '044', '049', '051', '054', '058', '066', '067'], num_trials=12)
 
 #%%
 
 ###
-# Iterate over participant specific .spydata files to extract and analyse label
-# distributions across trials, perform Jensen-Shannon Divergence calculations
-# between trials, permute results to derive an empirical p value for each pair,
-# then calculate a combined p value with Stouffer's method across participants
+# Iterate over participant .spydata files to extract label distributions across
+# trials, perform JS Divergence calculations between trials, permute results to
+# derive an empirical p value for each pair, calculate a combined p value with
+# Stouffer's method across participants
 ###
+
+# Directory containing the .spydata files; please adapt to your system
+directory = f'/Users/wi11iamk/Documents/GitHub/HUB_DT/data/{day}spydata'
 
 # Function to load a .spydata file and return the variables as a dictionary.
 def load_spydata(file_path):
@@ -846,7 +853,7 @@ def process_directory(directory):
             globals()[a_labels_key] = data['a_labels'].flatten()  # Ensure it's 1D
             a_labels_vars.append((a_labels_key, file_name))
             print(f"Loaded and renamed 'a_labels' to '{a_labels_key}'")
-            vars_to_keep = ['os', 'np', 'jensenshannon', 'norm', 'io', 'load_spydata', 'clear_workspace', 'compare_clusters', 'process_directory', 'a_labels_vars', 'process_file', 'flatten_counts', 'convert_to_proportions', 'permutation_test_jsd', 'combine_pvalues', 'day'] + [v[0] for v in a_labels_vars]
+            vars_to_keep = ['os', 'np', 'pd', 'plt', 'sns', 'jensenshannon', 'norm', 'ttest_rel', 'io', 'load_spydata', 'clear_workspace', 'compare_clusters', 'process_directory', 'a_labels_vars', 'process_file', 'convert_to_proportions', 'permutation_test_jsd', 'combine_pvalues', 'day', 'trial', 'micro'] + [v[0] for v in a_labels_vars]
             clear_workspace(vars_to_keep=vars_to_keep)
 
     for filename in os.listdir(directory):
@@ -856,14 +863,8 @@ def process_directory(directory):
     
     return a_labels_vars
 
-# Directory containing the .spydata files
-directory = f'/Users/wi11iamk/Documents/GitHub/HUB_DT/data/{day}spydata'
-
 # Process the directory and retrieve all saved 'a_labels' variables
 a_labels_vars = process_directory(directory)
-
-# Print out the names of all saved 'a_labels' variables to verify
-print("Saved a_labels variables:", a_labels_vars)
 
 # Collect all permutation test p-values from all participants
 all_p_values = []
@@ -873,13 +874,6 @@ def convert_to_proportions(counts, epsilon=1e-10):
     total_counts = counts.sum()
     proportions = (counts + epsilon) / (total_counts + epsilon * len(counts))
     proportions /= proportions.sum()  # Ensure proportions sum to 1
-    
-    # Debugging: Check for issues with normalisation
-    if not np.isclose(proportions.sum(), 1.0):
-        print(f"Debug: Normalisation issue, proportions sum to {proportions.sum()} instead of 1.0")
-        print(f"Counts: {counts}")
-        print(f"Proportions after normalisation: {proportions}")
-    
     return proportions
 
 # Function to perform permutation test to determine the significance of the observed JSD
@@ -899,6 +893,10 @@ def permutation_test_jsd(proportions1, proportions2, observed_jsd, n_permutation
     p_value = np.sum(perm_jsds >= observed_jsd) / n_permutations
     return observed_jsd, p_value
 
+# Data to be stored for each participant
+trial_results = []
+micro_results = []
+
 # Process each 'a_labels' variable for slicing and clustering analysis
 for a_labels_key, participant_id in a_labels_vars:
     a_labels = globals()[a_labels_key]
@@ -906,9 +904,47 @@ for a_labels_key, participant_id in a_labels_vars:
     # Get all possible unique labels from the entire a_labels array, excluding noise label (-1)
     all_labels = np.unique(a_labels)
     all_labels = all_labels[all_labels != -1]  # Exclude noise label (-1)
-    
+
+    # Calculate the mean JSD values for online and offline periods
+    if day == 'D1':
+        online_jsd = []
+        offline_jsd = []
+
+        for i in range(1, 13):
+            # Define micro-segments for online and offline JSD calculations
+            m1_key = f"{i}_m1"
+            m2_key = f"{i}_m2"
+            if i < 12:
+                next_m1_key = f"{i + 1}_m1"
+            
+            # Online JSD (m1 vs m2 for the same trial)
+            if m1_key in micro and m2_key in micro:
+                counts1, counts2 = compare_clusters(a_labels[micro[m1_key][0]:micro[m1_key][1]+1], a_labels[micro[m2_key][0]:micro[m2_key][1]+1], all_labels)
+                proportions1 = convert_to_proportions(counts1)
+                proportions2 = convert_to_proportions(counts2)
+                jsd_online = jensenshannon(proportions1, proportions2)
+                online_jsd.append(jsd_online)
+
+            # Offline JSD (m2 vs next m1 between trials)
+            if i < 12 and m2_key in micro and next_m1_key in micro:
+                counts1, counts2 = compare_clusters(a_labels[micro[m2_key][0]:micro[m2_key][1]+1], a_labels[micro[next_m1_key][0]:micro[next_m1_key][1]+1], all_labels)
+                proportions1 = convert_to_proportions(counts1)
+                proportions2 = convert_to_proportions(counts2)
+                jsd_offline = jensenshannon(proportions1, proportions2)
+                offline_jsd.append(jsd_offline)
+
+        mean_online_jsd = (np.mean(online_jsd))
+        mean_offline_jsd = (np.mean(offline_jsd))
+
+        # Store the micro_results
+        micro_results.append({
+            'Participant ID': participant_id,
+            'Mean Online JSD': round(mean_online_jsd, 4),
+            'Mean Offline JSD': round(mean_offline_jsd, 4)
+        })
+
     # Define slices
-    slices = [trial['1'], trial['12']]
+    slices = [trial['36'], trial['39']]  # <-- Set trials for comparison here
     
     # Initialise container for slice data segments
     cluster_labels_segments = []
@@ -926,22 +962,27 @@ for a_labels_key, participant_id in a_labels_vars:
     proportions1 = convert_to_proportions(counts1)
     proportions2 = convert_to_proportions(counts2)
 
-    # Debugging: Check which proportions do not sum to 1 and print the actual sum
-    if not np.isclose(np.sum(proportions1), 1.0):
-        print(f"Debug: Proportions1 for participant {participant_id} do not sum to 1. Actual sum: {np.sum(proportions1)}")
-    if not np.isclose(np.sum(proportions2), 1.0):
-        print(f"Debug: Proportions2 for participant {participant_id} do not sum to 1. Actual sum: {np.sum(proportions2)}")
-
     # Calculate the observed Jensen-Shannon Divergence between each pair of distributions
     observed_jsd = jensenshannon(proportions1, proportions2)
 
     # Perform permutation test
     _, p_value = permutation_test_jsd(proportions1, proportions2, observed_jsd, n_permutations=100000)
 
-    # Print the results for each participant
-    print(f"Observed JSD for {participant_id}: {observed_jsd}, Permutation Test P-value: {p_value}")
+    # Calculate z-score from the two-tailed p-value
+    z_score = norm.ppf(1 - p_value / 2)
 
-    # Store the p-value
+    # Store the trial_results
+    trial_results.append({
+        'Participant ID': participant_id,
+        'Observed JSD': round(observed_jsd, 4),
+        'Permutation P-value': round(p_value, 4),
+        'Z-score': round(z_score, 4)
+    })
+
+    # Print the trial_results for each participant
+    print(f"Participant ID: {participant_id}, Observed JSD: {observed_jsd}, Permutation Test P-value: {p_value}, Z-score: {z_score}")
+
+    # Store the p-value for combining
     all_p_values.append(p_value)
 
 # Combine p-values using Stouffer's method
@@ -953,15 +994,72 @@ def combine_pvalues(p_values):
 
 combined_p_value = combine_pvalues(all_p_values)
 
-# Print the final combined p-value
-print(f"Combined P-value across all participants: {combined_p_value}")
-
-# Final Decision
-if combined_p_value < 0.05:
-    print("Final Decision: reject the null hypothesis (the distributions are different across participants)")
+# Determine significance level
+if combined_p_value < 0.001:
+    significance = "p < 0.001"
+elif combined_p_value < 0.01:
+    significance = "p < 0.01"
+elif combined_p_value < 0.05:
+    significance = "p < 0.05"
 else:
-    print("Final Decision: fail to reject the null hypothesis (no significant difference across participants)")
+    significance = f"p = {combined_p_value:.3e}"
 
+# Print the final combined p-value and significance
+print(f"Combined P-value across all participants: {combined_p_value:.3e}")
+print(f"Significance: {significance}")
+
+# Create a DataFrame from the trial_results
+trial_results_df = pd.DataFrame(trial_results)
+
+# Plot the trial_results table as a figure
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.axis('tight')
+ax.axis('off')
+
+# Add title to the table
+title = f"Comparison of trial slices: {slices[0]} vs {slices[1]}"
+fig.suptitle(title, fontsize=14)
+
+# Add the table to the figure
+table_data = [trial_results_df.columns.values.tolist()] + trial_results_df.values.tolist()
+tbl = ax.table(cellText=table_data, cellLoc='center', loc='center')
+
+tbl.auto_set_font_size(False)
+tbl.set_fontsize(10)
+tbl.scale(1, 1.2)
+
+# Add combined p-value to the table
+tbl.add_cell(len(table_data), len(trial_results_df.columns) - 1, width=0.25, height=0.066, text=f"Stouffer's P: {combined_p_value:.3e}", loc='center')
+
+plt.show()
+
+# Calculate and plot mean JSD values for online and offline periods
+if day == 'D1' and micro_results:
+    micro_results_df = pd.DataFrame(micro_results)
+    plt.figure(figsize=(10, 6))
+    sns.barplot(data=micro_results_df.melt(id_vars='Participant ID', var_name='Period', value_name='JSD'),
+                x='Period', y='JSD', errorbar='sd')
+    sns.stripplot(data=micro_results_df.melt(id_vars='Participant ID', var_name='Period', value_name='JSD'),
+                  x='Period', y='JSD', color='black', alpha=0.5)
+
+    # Perform paired t-test
+    ttest_pvalue = ttest_rel(micro_results_df['Mean Online JSD'], micro_results_df['Mean Offline JSD']).pvalue
+
+    # Determine significance level
+    if ttest_pvalue < 0.001:
+        significance = "p < 0.001"
+    elif ttest_pvalue < 0.01:
+        significance = "p < 0.01"
+    elif ttest_pvalue < 0.05:
+        significance = "p < 0.05"
+    else:
+        significance = f"p = {ttest_pvalue:.3e}"
+        
+    plt.title("Mean Online and Offline JSD Values")
+    plt.xlabel(f"Paired t-test p-value: {significance}")
+    plt.show()
+
+    print(f"Paired t-test p-value for online vs. offline JSD: {ttest_pvalue:.3e}")
 #%%
 
 # TODO TBD
