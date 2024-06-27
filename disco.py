@@ -808,10 +808,10 @@ process_and_plot_data(participant_ids=['012', '014', '015', '016', '017', '018',
 #%%
 
 ###
-# Iterate over participant .spydata files to extract label distributions across
-# trials, perform JS Divergence calculations between trials, permute results to
+# Extract label distributions from each participant .spydata file,
+# perform JS Divergence calculations between and within trials, permute results to
 # derive an empirical p value for each pair, calculate a combined p value with
-# Stouffer's method across participants
+# Stouffer's method
 ###
 
 # Directory containing the .spydata files; please adapt to your system
