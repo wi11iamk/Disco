@@ -15,15 +15,15 @@ import os, csv
 import numpy as np, pandas as pd
 import umap, umap.plot
 import matplotlib.pyplot as plt, seaborn as sns
+import spyder_kernels.utils.iofuncs as io
+from fastdtw import fastdtw
+from hubdt import data_loading, wavelets, t_sne, hdb_clustering, b_utils
 from mycolours import custom_colour_list
 from parameters import D1, D2
-from hubdt import data_loading, wavelets, t_sne, hdb_clustering, b_utils
-from scipy.stats import sem, t, norm, linregress, ttest_rel
 from scipy.integrate import simpson
 from scipy.signal import find_peaks, savgol_filter
 from scipy.spatial.distance import jensenshannon
-from fastdtw import fastdtw
-import spyder_kernels.utils.iofuncs as io
+from scipy.stats import sem, t, norm, linregress, ttest_rel
 
 #%%
 
@@ -562,8 +562,8 @@ y_values_full, *_ = process_y_values(tracking_filtered)
 #%%
 
 ###
-# Using fast Dynamic Time Warping (DTW), calculate and plot the mean and 95% CI
-# over all occurrences of the synergy of interest
+# Calculate and plot the mean and 95% CI over all occurrences of the synergy of
+# interest (fast Dynamic Time Warping (fDTW))
 ###
 
 similar_segment_indices = find_similar_series(y_values_syn, y_values_full,
@@ -706,8 +706,8 @@ update_csv_data(pt=pt, cluster=cluster, kp=total_peaks_across_channels, dm = dur
 #%%
 
 ###
-# Iterate over participant specific CSVs to extract metrics for each label;
-# calculate weighted averages of each metric across participants and trials
+# Extract metrics for each label from participant specific CSVs; calculate
+# weighted averages of each metric across participants and trials
 ###
 
 def process_and_plot_data(participant_ids, num_trials):
@@ -803,14 +803,17 @@ def process_and_plot_data(participant_ids, num_trials):
     plt.tight_layout()
     plt.show()
 
-process_and_plot_data(participant_ids=['012', '014', '015', '016', '017', '018', '027', '028', '029', '036', '037', '039', '044', '049', '051', '054', '058', '066', '067'], num_trials=12)
+process_and_plot_data(participant_ids=['012', '014', '015', '016', '017', '018', 
+                                       '027', '028', '029', '036', '037', '039', 
+                                       '044', '049', '051', '054', '058', '066', 
+                                       '067'], num_trials=12)
 
 #%%
 
 ###
-# Extract label distributions from each participant .spydata file,
-# perform JS Divergence calculations between and within trials, permute results to
-# derive an empirical p value for each pair, calculate a combined p value with
+# Extract label distributions from each participant .spydata file, perform JS
+# Divergence calculations between and within trials, permute results to derive
+# an empirical p value for each pair, calculate a combined p value with
 # Stouffer's method
 ###
 
@@ -853,7 +856,12 @@ def process_directory(directory):
             globals()[a_labels_key] = data['a_labels'].flatten()  # Ensure it's 1D
             a_labels_vars.append((a_labels_key, file_name))
             print(f"Loaded and renamed 'a_labels' to '{a_labels_key}'")
-            vars_to_keep = ['os', 'np', 'pd', 'plt', 'sns', 'jensenshannon', 'norm', 'ttest_rel', 'io', 'load_spydata', 'clear_workspace', 'compare_clusters', 'process_directory', 'a_labels_vars', 'process_file', 'convert_to_proportions', 'permutation_test_jsd', 'combine_pvalues', 'day', 'trial', 'micro'] + [v[0] for v in a_labels_vars]
+            vars_to_keep = ['os', 'np', 'pd', 'plt', 'sns', 'jensenshannon', 
+                            'norm', 'ttest_rel', 'io', 'load_spydata', 
+                            'clear_workspace', 'compare_clusters', 'process_directory', 
+                            'a_labels_vars', 'process_file', 'convert_to_proportions', 
+                            'permutation_test_jsd', 'combine_pvalues', 'day', 
+                            'trial', 'micro'] + [v[0] for v in a_labels_vars]
             clear_workspace(vars_to_keep=vars_to_keep)
 
     for filename in os.listdir(directory):
@@ -862,6 +870,17 @@ def process_directory(directory):
             process_file(file_path, filename.split('.')[0])
     
     return a_labels_vars
+
+# Function to determine significance level
+def determine_significance(p_value):
+    if p_value < 0.001:
+        return "p < 0.001"
+    elif p_value < 0.01:
+        return "p < 0.01"
+    elif p_value < 0.05:
+        return "p < 0.05"
+    else:
+        return f"p = {p_value:.3e}"
 
 # Process the directory and retrieve all saved 'a_labels' variables
 a_labels_vars = process_directory(directory)
@@ -994,19 +1013,12 @@ def combine_pvalues(p_values):
 
 combined_p_value = combine_pvalues(all_p_values)
 
-# Determine significance level
-if combined_p_value < 0.001:
-    significance = "p < 0.001"
-elif combined_p_value < 0.01:
-    significance = "p < 0.01"
-elif combined_p_value < 0.05:
-    significance = "p < 0.05"
-else:
-    significance = f"p = {combined_p_value:.3e}"
+# Determine significance level for combined p-value
+significance_combined = determine_significance(combined_p_value)
 
 # Print the final combined p-value and significance
 print(f"Combined P-value across all participants: {combined_p_value:.3e}")
-print(f"Significance: {significance}")
+print(f"Significance: {significance_combined}")
 
 # Create a DataFrame from the trial_results
 trial_results_df = pd.DataFrame(trial_results)
@@ -1045,18 +1057,11 @@ if day == 'D1' and micro_results:
     # Perform paired t-test
     ttest_pvalue = ttest_rel(micro_results_df['Mean Online JSD'], micro_results_df['Mean Offline JSD']).pvalue
 
-    # Determine significance level
-    if ttest_pvalue < 0.001:
-        significance = "p < 0.001"
-    elif ttest_pvalue < 0.01:
-        significance = "p < 0.01"
-    elif ttest_pvalue < 0.05:
-        significance = "p < 0.05"
-    else:
-        significance = f"p = {ttest_pvalue:.3e}"
+    # Determine significance level for paired t-test p-value
+    significance_ttest = determine_significance(ttest_pvalue)
         
     plt.title("Mean Online and Offline JSD Values")
-    plt.xlabel(f"Paired t-test p-value: {significance}")
+    plt.xlabel(f"Paired t-test p-value: {significance_ttest}")
     plt.show()
 
     print(f"Paired t-test p-value for online vs. offline JSD: {ttest_pvalue:.3e}")
