@@ -86,18 +86,6 @@ def patternDetect(stream, targetSequence):
     score += interruptions
     return score
 
-def calculate_correct_keypresses_within_window(events, timestamps, window_start, window_end, target_sequence):
-    slice_events = [event for event, timestamp in zip(events, timestamps) if window_start <= timestamp <= window_end]
-    return patternDetect(slice_events, target_sequence)
-
-def analyse_trial_windows(events, timestamps, target_sequence):
-    start_ts, end_ts = timestamps[0], timestamps[-1]
-    first_window_end = min(start_ts + 1000, end_ts)
-    last_window_start = max(end_ts - 1000, start_ts)
-    first_window_correct = calculate_correct_keypresses_within_window(events, timestamps, start_ts, first_window_end, target_sequence)
-    last_window_correct = calculate_correct_keypresses_within_window(events, timestamps, last_window_start, end_ts, target_sequence)
-    return first_window_correct, last_window_correct
-
 def calculate_combined_transition_speeds(events, timestamps, transition_pairs):
     combined_speeds = []
     for i in range(len(events) - 2):  # Ensure there are at least two transitions
@@ -154,7 +142,6 @@ def parse_and_analyse_data(file_path, target_sequences, trial_counts, transition
             if trial_index in trial_events:
                 data = trial_events[trial_index]
                 events, timestamps = data['events'], data['timestamps']
-                first_window_correct, last_window_correct = analyse_trial_windows(events, timestamps, target_sequence)
                 correct_per_trial = [patternDetect(events, target_sequence) / 10 for _ in range(10)]
                 mean_correct_per_trial = np.mean(correct_per_trial)
                 parsed_data['CorrectKeyPressesPerS'][data['first_line_index']] = mean_correct_per_trial
