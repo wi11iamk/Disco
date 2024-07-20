@@ -10,64 +10,11 @@ import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from parameters import conditions, transition_pairs, seed_soil_pairs
 from itertools import chain
 
-# Define the conditions and their respective target sequences
-conditions = {
-    'C1': ["4 1 3", "2 4 1 3 4", "2 4 1", "1 2 4 1 3", "1 4 3", "3 1 4 3 2", 
-           "3 4 2", "2 3 4 2 3", "3 2 4", "4 3 2 4 1", "2 3 4", "3 2 3 4 2"],
-    'C2': ["2 4 1", "1 2 4 1 3", "1 4 3", "3 1 4 3 2", "2 3 4", "3 2 3 4 2", 
-           "4 1 3", "2 4 1 3 4", "3 4 2", "2 3 4 2 3", "3 2 4", "4 3 2 4 1"],
-    'C3': ["1 4 3", "3 1 4 3 2", "2 3 4", "3 2 3 4 2", "3 2 4", "4 3 2 4 1", 
-           "2 4 1", "1 2 4 1 3", "4 1 3", "2 4 1 3 4", "3 4 2", "2 3 4 2 3"],
-    'C4': ["2 3 4", "3 2 3 4 2", "3 2 4", "4 3 2 4 1", "3 4 2", "2 3 4 2 3", 
-           "1 4 3", "3 1 4 3 2", "2 4 1", "1 2 4 1 3", "4 1 3", "2 4 1 3 4"],
-    'C5': ["3 2 4", "4 3 2 4 1", "3 4 2", "2 3 4 2 3", "4 1 3", "2 4 1 3 4", 
-           "2 3 4", "3 2 3 4 2", "1 4 3", "3 1 4 3 2", "2 4 1", "1 2 4 1 3"],
-    'C6': ["3 4 2", "2 3 4 2 3", "4 1 3", "2 4 1 3 4", "2 4 1", "1 2 4 1 3", 
-           "3 2 4", "4 3 2 4 1", "2 3 4", "3 2 3 4 2", "1 4 3", "3 1 4 3 2"]
-}
-
-# Define the transitions of interest for each condition
-transition_pairs = {
-    'C1': [[(4, 1), (1, 3)], [(4, 1), (1, 3)], [(2, 4), (4, 1)], [(2, 4), (4, 1)], 
-           [(1, 4), (4, 3)], [(1, 4), (4, 3)], [(3, 4), (4, 2)], [(3, 4), (4, 2)], 
-           [(3, 2), (2, 4)], [(3, 2), (2, 4)], [(2, 3), (3, 4)], [(2, 3), (3, 4)]],
-    'C2': [[(2, 4), (4, 1)], [(2, 4), (4, 1)], [(1, 4), (4, 3)], [(1, 4), (4, 3)], 
-           [(2, 3), (3, 4)], [(2, 3), (3, 4)], [(4, 1), (1, 3)], [(4, 1), (1, 3)], 
-           [(3, 4), (4, 2)], [(3, 4), (4, 2)], [(3, 2), (2, 4)], [(3, 2), (2, 4)]],
-    'C3': [[(1, 4), (4, 3)], [(1, 4), (4, 3)], [(2, 3), (3, 4)], [(2, 3), (3, 4)], 
-           [(3, 2), (2, 4)], [(3, 2), (2, 4)], [(2, 4), (4, 1)], [(2, 4), (4, 1)], 
-           [(4, 1), (1, 3)], [(4, 1), (1, 3)], [(3, 4), (4, 2)], [(3, 4), (4, 2)]],
-    'C4': [[(2, 3), (3, 4)], [(2, 3), (3, 4)], [(3, 2), (2, 4)], [(3, 2), (2, 4)], 
-           [(3, 4), (4, 2)], [(3, 4), (4, 2)], [(1, 4), (4, 3)], [(1, 4), (4, 3)], 
-           [(2, 4), (4, 1)], [(2, 4), (4, 1)], [(4, 1), (1, 3)], [(4, 1), (1, 3)]],
-    'C5': [[(3, 2), (2, 4)], [(3, 2), (2, 4)], [(3, 4), (4, 2)], [(3, 4), (4, 2)], 
-           [(4, 1), (1, 3)], [(4, 1), (1, 3)], [(2, 3), (3, 4)], [(2, 3), (3, 4)], 
-           [(1, 4), (4, 3)], [(1, 4), (4, 3)], [(2, 4), (4, 1)], [(2, 4), (4, 1)]],
-    'C6': [[(3, 4), (4, 2)], [(3, 4), (4, 2)], [(4, 1), (1, 3)], [(4, 1), (1, 3)], 
-           [(2, 4), (4, 1)], [(2, 4), (4, 1)], [(3, 2), (2, 4)], [(3, 2), (2, 4)], 
-           [(2, 3), (3, 4)], [(2, 3), (3, 4)], [(1, 4), (4, 3)], [(1, 4), (4, 3)]]
-}
-
-# Define the seed_soil_pairs with assigned colors
-seed_soil_pairs = {
-    3: {'pairs': [(4, 1), (1, 3)], 'color': 'blue'},
-    4: {'pairs': [(4, 1), (1, 3)], 'color': 'green'}, 5: {'pairs': [(4, 1), (1, 3)], 'color': 'green'}, 6: {'pairs': [(4, 1), (1, 3)], 'color': 'green'},
-    13: {'pairs': [(2, 4), (4, 1)], 'color': 'red'},
-    14: {'pairs': [(2, 4), (4, 1)], 'color': 'mediumpurple'}, 15: {'pairs': [(2, 4), (4, 1)], 'color': 'mediumpurple'}, 16: {'pairs': [(2, 4), (4, 1)], 'color': 'mediumpurple'},
-    31: {'pairs': [(1, 4), (4, 3)], 'color': 'purple'},
-    32: {'pairs': [(1, 4), (4, 3)], 'color': 'cyan'}, 33: {'pairs': [(1, 4), (4, 3)], 'color': 'cyan'}, 34: {'pairs': [(1, 4), (4, 3)], 'color': 'cyan'},
-    45: {'pairs': [(3, 4), (4, 2)], 'color': 'magenta'},
-    46: {'pairs': [(3, 4), (4, 2)], 'color': 'gold'}, 47: {'pairs': [(3, 4), (4, 2)], 'color': 'gold'}, 48: {'pairs': [(3, 4), (4, 2)], 'color': 'gold'},
-    55: {'pairs': [(3, 2), (2, 4)], 'color': 'hotpink'},
-    56: {'pairs': [(3, 2), (2, 4)], 'color': 'springgreen'}, 57: {'pairs': [(3, 2), (2, 4)], 'color': 'springgreen'}, 58: {'pairs': [(3, 2), (2, 4)], 'color': 'springgreen'},
-    73: {'pairs': [(2, 3), (3, 4)], 'color': 'navy'},
-    74: {'pairs': [(2, 3), (3, 4)], 'color': 'crimson'}, 75: {'pairs': [(2, 3), (3, 4)], 'color': 'crimson'}, 76: {'pairs': [(2, 3), (3, 4)], 'color': 'crimson'}
-}
-
 # Set the condition
-cond = 'C6'
+cond = 'C1'
 trial_counts = [3, 3, 7, 7, 11, 11, 3, 3, 7, 7, 11, 11]
 target_sequences = conditions[cond]
 
@@ -206,7 +153,7 @@ def calculate_and_plot_correct_presses(all_correct_presses, num_trials_to_plot, 
     trial_sems = []
     x_values = list(range(1, num_trials_to_plot + 1))
     colors = ['blue', 'green', 'red', 'mediumpurple', 'purple', 'cyan', 'magenta', 'gold', 'hotpink', 'springgreen', 'navy', 'crimson']
-    plt.figure(figsise=(26, 10))
+    plt.figure(figsize=(26, 10))
 
     plt.subplot(2, 1, 1)
     break_position = 42
@@ -295,7 +242,7 @@ def plot_combined_transition_speeds(all_combined_speeds, participant_means, targ
             # plt.scatter([len(xtick_labels) - 1] * len(combined_speeds), combined_speeds, color='lightgrey', alpha=0.75)
 
             # Plot mean speed in color
-            plt.errorbar(len(xtick_labels) - 1, mean_speed, yerr=sem_speed, fmt='o', color=seed_soil_pairs[trial]['color'], alpha=0.75)
+            plt.errorbar(len(xtick_labels) - 1, mean_speed, yerr=sem_speed, fmt='o', color=seed_soil_pairs[trial]['color'], alpha=0.75, capsize=5)
         
         # Draw line connecting mean points
         plt.plot(group_positions, group_mean_speeds, color='grey', alpha=0.75)
